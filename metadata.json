@@ -1,0 +1,6 @@
+{
+  "name": "SIM-PPSI Aliran Nursyah",
+  "description": "Sistem Manajemen Organisasi Pencak Silat Aliran Nursyah (PPSI) — Pengelolaan Data Anggota, Tingkatan Sabuk, Wilayah Berjenjang, Cetak KTA Digital, Broadcast Informasi, Persuratan, dan Brankas Admin.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

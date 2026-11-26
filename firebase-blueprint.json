@@ -1,0 +1,306 @@
+{
+  "entities": {
+    "AdminUser": {
+      "title": "Admin Pusat",
+      "description": "Akun Admin Pusat terverifikasi yang memiliki hak kelola wilayah dan akses Brankas Dokumen Admin.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "minLength": 3, "maxLength": 180 },
+        "nama": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "jabatan": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "addedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "nama", "jabatan", "addedBy", "createdAt"]
+    },
+    "AdminEmail": {
+      "title": "Admin Premium (3 Slot Email)",
+      "description": "Daftar maksimal 3 email Google terverifikasi yang diberikan akses penuh fitur Admin Premium.",
+      "type": "object",
+      "properties": {
+        "slot": { "type": "integer" },
+        "email": { "type": "string", "minLength": 5, "maxLength": 180 },
+        "nama": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "jabatan": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "addedBy": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["slot", "email", "nama", "jabatan", "addedBy", "createdAt", "updatedAt"]
+    },
+    "Region": {
+      "title": "Wilayah Administrasi & Ranting",
+      "description": "Data wilayah berjenjang Provinsi, Kabupaten/Kota, Kecamatan, hingga Ranting/Cabang Latihan.",
+      "type": "object",
+      "properties": {
+        "level": { "type": "string", "enum": ["provinsi", "kabupaten", "kecamatan", "ranting"] },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "parentId": { "type": "string", "maxLength": 128 },
+        "provinsiName": { "type": "string", "maxLength": 120 },
+        "kabupatenName": { "type": "string", "maxLength": 120 },
+        "kecamatanName": { "type": "string", "maxLength": 120 },
+        "alamatSekretariat": { "type": "string", "maxLength": 300 },
+        "pelatihUtama": { "type": "string", "maxLength": 120 },
+        "jadwalLatihan": { "type": "string", "maxLength": 160 },
+        "orgCode": { "type": "string", "enum": ["NURSYAH"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["level", "name", "orgCode", "createdAt", "updatedAt"]
+    },
+    "BeltLevel": {
+      "title": "Klasifikasi Tingkatan Sabuk",
+      "description": "Master tingkatan sabuk mulai Sabuk Kuning Mas, Sabuk Putih, hingga Tingkat Strip 1-17 beserta catatan sejarah.",
+      "type": "object",
+      "properties": {
+        "order": { "type": "integer" },
+        "name": { "type": "string", "minLength": 3, "maxLength": 60 },
+        "category": { "type": "string", "enum": ["Sabuk Dasar", "Tingkat Strip"] },
+        "colorHex": { "type": "string", "minLength": 4, "maxLength": 16 },
+        "stripeCount": { "type": "integer" },
+        "sejarah": { "type": "string", "minLength": 1, "maxLength": 1500 },
+        "kurikulum": { "type": "string", "maxLength": 1000 },
+        "orgCode": { "type": "string", "enum": ["NURSYAH"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["order", "name", "category", "colorHex", "stripeCount", "sejarah", "orgCode", "updatedAt"]
+    },
+    "Member": {
+      "title": "Data Anggota Organisasi",
+      "description": "Data profil anggota pencak silat beserta pengelompokan wilayah berjenjang, tingkatan sabuk, dan riwayat kenaikan tingkat.",
+      "type": "object",
+      "properties": {
+        "nia": { "type": "string", "minLength": 3, "maxLength": 40, "pattern": "^[a-zA-Z0-9_\\-\\.]+$" },
+        "namaLengkap": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "provinsi": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "kabupaten": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "kecamatan": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "ranting": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "alamatLengkap": { "type": "string", "maxLength": 350 },
+        "sabuk": { "type": "string", "minLength": 3, "maxLength": 60 },
+        "sabukOrder": { "type": "integer" },
+        "fotoProfil": { "type": "string", "maxLength": 250000 },
+        "statusAktif": { "type": "string", "enum": ["Aktif", "Cuti", "Alumni"] },
+        "riwayatTingkat": { "type": "array" },
+        "berkasChecklist": { "type": "object" },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgCode": { "type": "string", "enum": ["NURSYAH"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "nia",
+        "namaLengkap",
+        "provinsi",
+        "kabupaten",
+        "kecamatan",
+        "ranting",
+        "sabuk",
+        "sabukOrder",
+        "statusAktif",
+        "riwayatTingkat",
+        "berkasChecklist",
+        "ownerUid",
+        "orgCode",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MemberPii": {
+      "title": "Data Pribadi Anggota (PII Terisolasi)",
+      "description": "Data sensitif anggota seperti nomor WhatsApp, tempat/tanggal lahir, alamat domisili lengkap, dan lampiran berkas.",
+      "type": "object",
+      "properties": {
+        "nomorWa": { "type": "string", "minLength": 8, "maxLength": 24 },
+        "tempatLahir": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "tanggalLahir": { "type": "string", "minLength": 4, "maxLength": 20 },
+        "alamatDomisili": { "type": "string", "minLength": 4, "maxLength": 350 },
+        "berkasNama": { "type": "string", "maxLength": 160 },
+        "berkasDataUrl": { "type": "string", "maxLength": 350000 },
+        "ownerUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nomorWa", "tempatLahir", "tanggalLahir", "alamatDomisili", "ownerUid", "updatedAt"]
+    },
+    "Broadcast": {
+      "title": "Broadcast Informasi",
+      "description": "Pengumuman resmi organisasi dengan penargetan alamat wilayah atau tingkatan sabuk.",
+      "type": "object",
+      "properties": {
+        "judul": { "type": "string", "minLength": 3, "maxLength": 150 },
+        "isiPesan": { "type": "string", "minLength": 5, "maxLength": 3000 },
+        "pengirimNama": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "pengirimUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "targetScope": { "type": "string", "enum": ["Semua", "Wilayah", "Sabuk"] },
+        "targetProvinsi": { "type": "string", "maxLength": 120 },
+        "targetKabupaten": { "type": "string", "maxLength": 120 },
+        "targetKecamatan": { "type": "string", "maxLength": 120 },
+        "targetRanting": { "type": "string", "maxLength": 120 },
+        "targetSabuk": { "type": "string", "maxLength": 60 },
+        "prioritas": { "type": "string", "enum": ["Normal", "Penting", "Mendesak"] },
+        "orgCode": { "type": "string", "enum": ["NURSYAH"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["judul", "isiPesan", "pengirimNama", "pengirimUid", "targetScope", "prioritas", "orgCode", "createdAt"]
+    },
+    "Letter": {
+      "title": "Surat & SK Resmi",
+      "description": "Arsip surat undangan, surat tugas, surat edaran, dan SK resmi dengan tujuan spesifik per ranting/cabang.",
+      "type": "object",
+      "properties": {
+        "nomorSurat": { "type": "string", "minLength": 3, "maxLength": 80 },
+        "jenisSurat": { "type": "string", "enum": ["Surat Undangan", "Surat Tugas", "SK Resmi", "Surat Edaran"] },
+        "perihal": { "type": "string", "minLength": 3, "maxLength": 180 },
+        "isiSurat": { "type": "string", "minLength": 5, "maxLength": 5000 },
+        "targetWilayah": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "targetRanting": { "type": "string", "maxLength": 120 },
+        "tanggalSurat": { "type": "string", "minLength": 4, "maxLength": 24 },
+        "penandatangan": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "lampiranNama": { "type": "string", "maxLength": 160 },
+        "lampiranDataUrl": { "type": "string", "maxLength": 400000 },
+        "statusDistribusi": { "type": "string", "enum": ["Draft", "Terkirim"] },
+        "authorUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgCode": { "type": "string", "enum": ["NURSYAH"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "nomorSurat",
+        "jenisSurat",
+        "perihal",
+        "isiSurat",
+        "targetWilayah",
+        "tanggalSurat",
+        "penandatangan",
+        "statusDistribusi",
+        "authorUid",
+        "orgCode",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DocumentationItem": {
+      "title": "Dokumentasi Kegiatan",
+      "description": "Foto atau video kegiatan organisasi yang dikelompokkan berdasarkan kategori dan lokasi acara.",
+      "type": "object",
+      "properties": {
+        "judul": { "type": "string", "minLength": 3, "maxLength": 150 },
+        "kategori": { "type": "string", "enum": ["Kenangan", "Acara/Kegiatan", "Ujian Kenaikan Tingkat", "Dokumentasi Lainnya"] },
+        "deskripsi": { "type": "string", "maxLength": 800 },
+        "tanggalKegiatan": { "type": "string", "minLength": 4, "maxLength": 24 },
+        "provinsi": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "kabupaten": { "type": "string", "maxLength": 120 },
+        "kecamatan": { "type": "string", "maxLength": 120 },
+        "ranting": { "type": "string", "maxLength": 120 },
+        "lokasiDetail": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "mediaType": { "type": "string", "enum": ["image", "video"] },
+        "mediaUrl": { "type": "string", "minLength": 5, "maxLength": 400000 },
+        "uploaderUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uploaderName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "orgCode": { "type": "string", "enum": ["NURSYAH"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "judul",
+        "kategori",
+        "tanggalKegiatan",
+        "provinsi",
+        "lokasiDetail",
+        "mediaType",
+        "mediaUrl",
+        "uploaderUid",
+        "uploaderName",
+        "orgCode",
+        "createdAt"
+      ]
+    },
+    "AdminVaultDoc": {
+      "title": "Brankas Dokumen Admin",
+      "description": "Penyimpanan rahasia dokumen legalitas dan arsip penting organisasi khusus Admin Pusat terverifikasi.",
+      "type": "object",
+      "properties": {
+        "judul": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "kategori": { "type": "string", "enum": ["Legalitas & AD/ART", "Keuangan Pusat", "SK Pengurus", "Arsip Rahasia"] },
+        "nomorDokumen": { "type": "string", "maxLength": 80 },
+        "keterangan": { "type": "string", "maxLength": 1000 },
+        "fileName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "fileType": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "fileDataUrl": { "type": "string", "minLength": 5, "maxLength": 450000 },
+        "uploadedByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uploadedByEmail": { "type": "string", "minLength": 3, "maxLength": 180 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "judul",
+        "kategori",
+        "fileName",
+        "fileType",
+        "fileDataUrl",
+        "uploadedByUid",
+        "uploadedByEmail",
+        "createdAt"
+      ]
+    },
+    "BackupLog": {
+      "title": "Log Backup Otomatis",
+      "description": "Riwayat pencadangan sistem organisasi yang dicatat untuk audit dan pemulihan Admin Pusat.",
+      "type": "object",
+      "properties": {
+        "triggerType": { "type": "string", "enum": ["otomatis", "manual"] },
+        "totalMembers": { "type": "integer" },
+        "totalRegions": { "type": "integer" },
+        "totalLetters": { "type": "integer" },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["triggerType", "totalMembers", "totalRegions", "totalLetters", "createdByUid", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Daftar Admin Pusat terverifikasi berdasarkan UID."
+    },
+    "/admin_emails/{emailId}": {
+      "schema": { "$ref": "#/entities/AdminEmail" },
+      "description": "Daftar 3 email Admin Premium terverifikasi."
+    },
+    "/regions/{regionId}": {
+      "schema": { "$ref": "#/entities/Region" },
+      "description": "Master hierarki wilayah Provinsi, Kabupaten/Kota, Kecamatan, dan Ranting."
+    },
+    "/belt_levels/{levelId}": {
+      "schema": { "$ref": "#/entities/BeltLevel" },
+      "description": "Master klasifikasi tingkatan sabuk & catatan sejarah."
+    },
+    "/members/{memberId}": {
+      "schema": { "$ref": "#/entities/Member" },
+      "description": "Data utama anggota & riwayat kenaikan tingkat."
+    },
+    "/members/{memberId}/private/pii": {
+      "schema": { "$ref": "#/entities/MemberPii" },
+      "description": "Dokumen PII terisolasi milik anggota (WA, TTL, Alamat Domisili, Berkas)."
+    },
+    "/broadcasts/{broadcastId}": {
+      "schema": { "$ref": "#/entities/Broadcast" },
+      "description": "Pengumuman broadcast organisasi."
+    },
+    "/letters/{letterId}": {
+      "schema": { "$ref": "#/entities/Letter" },
+      "description": "Surat undangan, tugas, edaran, dan SK resmi."
+    },
+    "/documentation/{docId}": {
+      "schema": { "$ref": "#/entities/DocumentationItem" },
+      "description": "Galeri dokumentasi kegiatan berdasarkan kategori dan lokasi."
+    },
+    "/admin_vault/{vaultId}": {
+      "schema": { "$ref": "#/entities/AdminVaultDoc" },
+      "description": "Brankas dokumen rahasia khusus Admin Pusat."
+    },
+    "/backups/{backupId}": {
+      "schema": { "$ref": "#/entities/BackupLog" },
+      "description": "Catatan log backup otomatis & manual Admin Pusat."
+    }
+  }
+}

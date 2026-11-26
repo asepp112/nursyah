@@ -1,0 +1,455 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidEmailDocId(id) {
+      return id is string && id.size() >= 5 && id.size() <= 180 && id.matches('^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isRootAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'fadliyuliansyah733@gmail.com';
+    }
+
+    function isAdmin() {
+      return isRootAdmin()
+        || (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)))
+        || (isVerifiedUser() && request.auth.token.email is string && exists(/databases/$(database)/documents/admin_emails/$(request.auth.token.email.lower())));
+    }
+
+    // Validation Blueprints
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'nama', 'jabatan', 'addedBy', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'nama', 'jabatan', 'addedBy', 'createdAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 180
+        && data.nama is string && data.nama.size() >= 1 && data.nama.size() <= 120
+        && data.jabatan is string && data.jabatan.size() >= 1 && data.jabatan.size() <= 120
+        && data.addedBy is string && data.addedBy.size() >= 1 && data.addedBy.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAdminEmail(data) {
+      return data.keys().hasAll(['slot', 'email', 'nama', 'jabatan', 'addedBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['slot', 'email', 'nama', 'jabatan', 'addedBy', 'createdAt', 'updatedAt'])
+        && data.slot is int && data.slot >= 1 && data.slot <= 3
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 180 && data.email.matches('^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$')
+        && data.nama is string && data.nama.size() >= 2 && data.nama.size() <= 120
+        && data.jabatan is string && data.jabatan.size() >= 2 && data.jabatan.size() <= 120
+        && isValidId(data.addedBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRegion(data) {
+      return data.keys().hasAll(['level', 'name', 'orgCode', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'level', 'name', 'parentId', 'provinsiName', 'kabupatenName',
+          'kecamatanName', 'alamatSekretariat', 'pelatihUtama', 'jadwalLatihan',
+          'orgCode', 'createdAt', 'updatedAt'
+        ])
+        && data.level in ['provinsi', 'kabupaten', 'kecamatan', 'ranting']
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 120
+        && (!('parentId' in data) || (data.parentId is string && data.parentId.size() <= 128))
+        && (!('provinsiName' in data) || (data.provinsiName is string && data.provinsiName.size() <= 120))
+        && (!('kabupatenName' in data) || (data.kabupatenName is string && data.kabupatenName.size() <= 120))
+        && (!('kecamatanName' in data) || (data.kecamatanName is string && data.kecamatanName.size() <= 120))
+        && (!('alamatSekretariat' in data) || (data.alamatSekretariat is string && data.alamatSekretariat.size() <= 300))
+        && (!('pelatihUtama' in data) || (data.pelatihUtama is string && data.pelatihUtama.size() <= 120))
+        && (!('jadwalLatihan' in data) || (data.jadwalLatihan is string && data.jadwalLatihan.size() <= 160))
+        && data.orgCode == 'NURSYAH'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBeltLevel(data) {
+      return data.keys().hasAll(['order', 'name', 'category', 'colorHex', 'stripeCount', 'sejarah', 'orgCode', 'updatedAt'])
+        && data.keys().hasOnly(['order', 'name', 'category', 'colorHex', 'stripeCount', 'sejarah', 'kurikulum', 'orgCode', 'updatedAt'])
+        && data.order is int && data.order >= 1 && data.order <= 30
+        && data.name is string && data.name.size() >= 3 && data.name.size() <= 60
+        && data.category in ['Sabuk Dasar', 'Tingkat Strip']
+        && data.colorHex is string && data.colorHex.size() >= 4 && data.colorHex.size() <= 16
+        && data.stripeCount is int && data.stripeCount >= 0 && data.stripeCount <= 17
+        && data.sejarah is string && data.sejarah.size() >= 1 && data.sejarah.size() <= 1500
+        && (!('kurikulum' in data) || (data.kurikulum is string && data.kurikulum.size() <= 1000))
+        && data.orgCode == 'NURSYAH'
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMember(data) {
+      return data.keys().hasAll([
+          'nia', 'namaLengkap', 'provinsi', 'kabupaten', 'kecamatan', 'ranting',
+          'sabuk', 'sabukOrder', 'statusAktif', 'riwayatTingkat', 'berkasChecklist',
+          'ownerUid', 'orgCode', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'nia', 'namaLengkap', 'provinsi', 'kabupaten', 'kecamatan', 'ranting',
+          'alamatLengkap', 'sabuk', 'sabukOrder', 'fotoProfil', 'statusAktif',
+          'riwayatTingkat', 'berkasChecklist', 'ownerUid', 'orgCode', 'createdAt', 'updatedAt'
+        ])
+        && data.nia is string && data.nia.size() >= 3 && data.nia.size() <= 40 && data.nia.matches('^[a-zA-Z0-9_\\-\\.]+$')
+        && data.namaLengkap is string && data.namaLengkap.size() >= 2 && data.namaLengkap.size() <= 120
+        && data.provinsi is string && data.provinsi.size() >= 2 && data.provinsi.size() <= 120
+        && data.kabupaten is string && data.kabupaten.size() >= 2 && data.kabupaten.size() <= 120
+        && data.kecamatan is string && data.kecamatan.size() >= 2 && data.kecamatan.size() <= 120
+        && data.ranting is string && data.ranting.size() >= 2 && data.ranting.size() <= 120
+        && (!('alamatLengkap' in data) || (data.alamatLengkap is string && data.alamatLengkap.size() <= 350))
+        && data.sabuk is string && data.sabuk.size() >= 3 && data.sabuk.size() <= 60
+        && data.sabukOrder is int && data.sabukOrder >= 1 && data.sabukOrder <= 30
+        && (!('fotoProfil' in data) || (data.fotoProfil is string && data.fotoProfil.size() <= 250000))
+        && data.statusAktif in ['Aktif', 'Cuti', 'Alumni']
+        && data.riwayatTingkat is list && data.riwayatTingkat.size() <= 25
+        && (data.riwayatTingkat.size() == 0 || data.riwayatTingkat[0] is map)
+        && data.berkasChecklist is map
+        && data.berkasChecklist.keys().hasAll(['formulir', 'ktpKk', 'suratSehat', 'foto'])
+        && data.berkasChecklist.keys().hasOnly(['formulir', 'ktpKk', 'suratSehat', 'foto'])
+        && data.berkasChecklist.formulir is bool
+        && data.berkasChecklist.ktpKk is bool
+        && data.berkasChecklist.suratSehat is bool
+        && data.berkasChecklist.foto is bool
+        && isValidId(data.ownerUid)
+        && data.orgCode == 'NURSYAH'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMemberPii(data) {
+      return data.keys().hasAll(['nomorWa', 'tempatLahir', 'tanggalLahir', 'alamatDomisili', 'ownerUid', 'updatedAt'])
+        && data.keys().hasOnly(['nomorWa', 'tempatLahir', 'tanggalLahir', 'alamatDomisili', 'berkasNama', 'berkasDataUrl', 'ownerUid', 'updatedAt'])
+        && data.nomorWa is string && data.nomorWa.size() >= 8 && data.nomorWa.size() <= 24
+        && data.tempatLahir is string && data.tempatLahir.size() >= 2 && data.tempatLahir.size() <= 80
+        && data.tanggalLahir is string && data.tanggalLahir.size() >= 4 && data.tanggalLahir.size() <= 20
+        && data.alamatDomisili is string && data.alamatDomisili.size() >= 4 && data.alamatDomisili.size() <= 350
+        && (!('berkasNama' in data) || (data.berkasNama is string && data.berkasNama.size() <= 160))
+        && (!('berkasDataUrl' in data) || (data.berkasDataUrl is string && data.berkasDataUrl.size() <= 350000))
+        && isValidId(data.ownerUid)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBroadcast(data) {
+      return data.keys().hasAll(['judul', 'isiPesan', 'pengirimNama', 'pengirimUid', 'targetScope', 'prioritas', 'orgCode', 'createdAt'])
+        && data.keys().hasOnly([
+          'judul', 'isiPesan', 'pengirimNama', 'pengirimUid', 'targetScope',
+          'targetProvinsi', 'targetKabupaten', 'targetKecamatan', 'targetRanting',
+          'targetSabuk', 'prioritas', 'orgCode', 'createdAt'
+        ])
+        && data.judul is string && data.judul.size() >= 3 && data.judul.size() <= 150
+        && data.isiPesan is string && data.isiPesan.size() >= 5 && data.isiPesan.size() <= 3000
+        && data.pengirimNama is string && data.pengirimNama.size() >= 2 && data.pengirimNama.size() <= 120
+        && isValidId(data.pengirimUid)
+        && data.targetScope in ['Semua', 'Wilayah', 'Sabuk']
+        && (!('targetProvinsi' in data) || (data.targetProvinsi is string && data.targetProvinsi.size() <= 120))
+        && (!('targetKabupaten' in data) || (data.targetKabupaten is string && data.targetKabupaten.size() <= 120))
+        && (!('targetKecamatan' in data) || (data.targetKecamatan is string && data.targetKecamatan.size() <= 120))
+        && (!('targetRanting' in data) || (data.targetRanting is string && data.targetRanting.size() <= 120))
+        && (!('targetSabuk' in data) || (data.targetSabuk is string && data.targetSabuk.size() <= 60))
+        && data.prioritas in ['Normal', 'Penting', 'Mendesak']
+        && data.orgCode == 'NURSYAH'
+        && data.createdAt is timestamp;
+    }
+
+    function isValidLetter(data) {
+      return data.keys().hasAll([
+          'nomorSurat', 'jenisSurat', 'perihal', 'isiSurat', 'targetWilayah',
+          'tanggalSurat', 'penandatangan', 'statusDistribusi', 'authorUid',
+          'orgCode', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'nomorSurat', 'jenisSurat', 'perihal', 'isiSurat', 'targetWilayah',
+          'targetRanting', 'tanggalSurat', 'penandatangan', 'lampiranNama',
+          'lampiranDataUrl', 'statusDistribusi', 'authorUid', 'orgCode',
+          'createdAt', 'updatedAt'
+        ])
+        && data.nomorSurat is string && data.nomorSurat.size() >= 3 && data.nomorSurat.size() <= 80
+        && data.jenisSurat in ['Surat Undangan', 'Surat Tugas', 'SK Resmi', 'Surat Edaran']
+        && data.perihal is string && data.perihal.size() >= 3 && data.perihal.size() <= 180
+        && data.isiSurat is string && data.isiSurat.size() >= 5 && data.isiSurat.size() <= 5000
+        && data.targetWilayah is string && data.targetWilayah.size() >= 2 && data.targetWilayah.size() <= 200
+        && (!('targetRanting' in data) || (data.targetRanting is string && data.targetRanting.size() <= 120))
+        && data.tanggalSurat is string && data.tanggalSurat.size() >= 4 && data.tanggalSurat.size() <= 24
+        && data.penandatangan is string && data.penandatangan.size() >= 2 && data.penandatangan.size() <= 120
+        && (!('lampiranNama' in data) || (data.lampiranNama is string && data.lampiranNama.size() <= 160))
+        && (!('lampiranDataUrl' in data) || (data.lampiranDataUrl is string && data.lampiranDataUrl.size() <= 400000))
+        && data.statusDistribusi in ['Draft', 'Terkirim']
+        && isValidId(data.authorUid)
+        && data.orgCode == 'NURSYAH'
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDocItem(data) {
+      return data.keys().hasAll([
+          'judul', 'kategori', 'tanggalKegiatan', 'provinsi', 'lokasiDetail',
+          'mediaType', 'mediaUrl', 'uploaderUid', 'uploaderName', 'orgCode', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'judul', 'kategori', 'deskripsi', 'tanggalKegiatan', 'provinsi',
+          'kabupaten', 'kecamatan', 'ranting', 'lokasiDetail', 'mediaType',
+          'mediaUrl', 'uploaderUid', 'uploaderName', 'orgCode', 'createdAt'
+        ])
+        && data.judul is string && data.judul.size() >= 3 && data.judul.size() <= 150
+        && data.kategori in ['Kenangan', 'Acara/Kegiatan', 'Ujian Kenaikan Tingkat', 'Dokumentasi Lainnya']
+        && (!('deskripsi' in data) || (data.deskripsi is string && data.deskripsi.size() <= 800))
+        && data.tanggalKegiatan is string && data.tanggalKegiatan.size() >= 4 && data.tanggalKegiatan.size() <= 24
+        && data.provinsi is string && data.provinsi.size() >= 2 && data.provinsi.size() <= 120
+        && (!('kabupaten' in data) || (data.kabupaten is string && data.kabupaten.size() <= 120))
+        && (!('kecamatan' in data) || (data.kecamatan is string && data.kecamatan.size() <= 120))
+        && (!('ranting' in data) || (data.ranting is string && data.ranting.size() <= 120))
+        && data.lokasiDetail is string && data.lokasiDetail.size() >= 2 && data.lokasiDetail.size() <= 200
+        && data.mediaType in ['image', 'video']
+        && data.mediaUrl is string && data.mediaUrl.size() >= 5 && data.mediaUrl.size() <= 400000
+        && isValidId(data.uploaderUid)
+        && data.uploaderName is string && data.uploaderName.size() >= 2 && data.uploaderName.size() <= 120
+        && data.orgCode == 'NURSYAH'
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAdminVaultDoc(data) {
+      return data.keys().hasAll([
+          'judul', 'kategori', 'fileName', 'fileType', 'fileDataUrl',
+          'uploadedByUid', 'uploadedByEmail', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'judul', 'kategori', 'nomorDokumen', 'keterangan', 'fileName',
+          'fileType', 'fileDataUrl', 'uploadedByUid', 'uploadedByEmail', 'createdAt'
+        ])
+        && data.judul is string && data.judul.size() >= 3 && data.judul.size() <= 160
+        && data.kategori in ['Legalitas & AD/ART', 'Keuangan Pusat', 'SK Pengurus', 'Arsip Rahasia']
+        && (!('nomorDokumen' in data) || (data.nomorDokumen is string && data.nomorDokumen.size() <= 80))
+        && (!('keterangan' in data) || (data.keterangan is string && data.keterangan.size() <= 1000))
+        && data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 160
+        && data.fileType is string && data.fileType.size() >= 1 && data.fileType.size() <= 80
+        && data.fileDataUrl is string && data.fileDataUrl.size() >= 5 && data.fileDataUrl.size() <= 450000
+        && isValidId(data.uploadedByUid)
+        && data.uploadedByEmail is string && data.uploadedByEmail.size() >= 3 && data.uploadedByEmail.size() <= 180
+        && data.createdAt is timestamp;
+    }
+
+    function isValidBackupLog(data) {
+      return data.keys().hasAll(['triggerType', 'totalMembers', 'totalRegions', 'totalLetters', 'createdByUid', 'createdAt'])
+        && data.keys().hasOnly(['triggerType', 'totalMembers', 'totalRegions', 'totalLetters', 'createdByUid', 'createdAt'])
+        && data.triggerType in ['otomatis', 'manual']
+        && data.totalMembers is int && data.totalMembers >= 0
+        && data.totalRegions is int && data.totalRegions >= 0
+        && data.totalLetters is int && data.totalLetters >= 0
+        && isValidId(data.createdByUid)
+        && data.createdAt is timestamp;
+    }
+
+    // Collection Match Blocks
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && isVerifiedUser() && (request.auth.uid == adminUid || isAdmin());
+      allow list: if isVerifiedUser() && (request.auth.token.email == 'fadliyuliansyah733@gmail.com' || resource.data.uid == request.auth.uid);
+      allow create: if isValidId(adminUid) && isAdmin() && isValidAdminUser(incoming()) && incoming().uid == adminUid && incoming().createdAt == request.time;
+      allow update: if isValidId(adminUid) && isAdmin() && isValidAdminUser(incoming()) && incoming().uid == existing().uid && incoming().createdAt == existing().createdAt && incoming().diff(existing()).affectedKeys().hasOnly(['nama', 'jabatan', 'email']);
+      allow delete: if isValidId(adminUid) && isAdmin() && adminUid != request.auth.uid;
+    }
+
+    match /admin_emails/{emailId} {
+      allow get: if isValidEmailDocId(emailId) && isVerifiedUser() && (
+        (request.auth.token.email is string && request.auth.token.email.lower() == emailId)
+        || isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        request.auth.token.email == 'fadliyuliansyah733@gmail.com'
+        || (request.auth.token.email is string && resource.data.email == request.auth.token.email.lower())
+        || resource.data.addedBy == request.auth.uid
+      );
+      allow create: if isValidEmailDocId(emailId)
+        && isAdmin()
+        && isValidAdminEmail(incoming())
+        && incoming().email == emailId
+        && incoming().addedBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidEmailDocId(emailId)
+        && isAdmin()
+        && isValidAdminEmail(incoming())
+        && incoming().email == existing().email
+        && incoming().addedBy == existing().addedBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['slot', 'nama', 'jabatan', 'updatedAt']);
+      allow delete: if isValidEmailDocId(emailId)
+        && isAdmin()
+        && !(request.auth.token.email is string && request.auth.token.email.lower() == emailId);
+    }
+
+    match /regions/{regionId} {
+      allow get: if isValidId(regionId) && resource.data.orgCode == 'NURSYAH';
+      allow list: if resource.data.orgCode == 'NURSYAH';
+      allow create: if isValidId(regionId) && isAdmin() && isValidRegion(incoming()) && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(regionId) && isAdmin() && isValidRegion(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && incoming().diff(existing()).affectedKeys().hasOnly([
+        'level', 'name', 'parentId', 'provinsiName', 'kabupatenName', 'kecamatanName', 'alamatSekretariat', 'pelatihUtama', 'jadwalLatihan', 'updatedAt'
+      ]);
+      allow delete: if isValidId(regionId) && isAdmin();
+    }
+
+    match /belt_levels/{levelId} {
+      allow get: if isValidId(levelId) && resource.data.orgCode == 'NURSYAH';
+      allow list: if resource.data.orgCode == 'NURSYAH';
+      allow create: if isValidId(levelId) && isAdmin() && isValidBeltLevel(incoming()) && incoming().updatedAt == request.time;
+      allow update: if isValidId(levelId) && isAdmin() && isValidBeltLevel(incoming()) && incoming().updatedAt == request.time && incoming().diff(existing()).affectedKeys().hasOnly([
+        'order', 'name', 'category', 'colorHex', 'stripeCount', 'sejarah', 'kurikulum', 'updatedAt'
+      ]);
+      allow delete: if isValidId(levelId) && isAdmin();
+    }
+
+    match /members/{memberId} {
+      allow get: if isValidId(memberId) && resource.data.orgCode == 'NURSYAH';
+      allow list: if resource.data.orgCode == 'NURSYAH';
+      allow create: if isValidId(memberId)
+        && isValidMember(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          (isVerifiedUser() && incoming().ownerUid == request.auth.uid)
+          || (!isVerifiedUser() && incoming().ownerUid == 'mandiri' && incoming().riwayatTingkat.size() == 0)
+        );
+      allow update: if isValidId(memberId)
+        && isVerifiedUser()
+        && isValidMember(incoming())
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'nia', 'namaLengkap', 'provinsi', 'kabupaten', 'kecamatan', 'ranting',
+            'alamatLengkap', 'sabuk', 'sabukOrder', 'fotoProfil', 'statusAktif',
+            'riwayatTingkat', 'berkasChecklist', 'updatedAt'
+          ])) ||
+          (isVerifiedUser() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'namaLengkap', 'provinsi', 'kabupaten', 'kecamatan', 'ranting',
+            'alamatLengkap', 'sabuk', 'sabukOrder', 'fotoProfil', 'statusAktif',
+            'riwayatTingkat', 'berkasChecklist', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(memberId) && (isAdmin() || (isVerifiedUser() && existing().ownerUid == request.auth.uid));
+
+      match /private/pii {
+        allow get: if isValidId(memberId) && (isAdmin() || (isVerifiedUser() && resource.data.ownerUid == request.auth.uid));
+        allow list: if false;
+        allow create: if isValidId(memberId)
+          && isValidMemberPii(incoming())
+          && incoming().updatedAt == request.time
+          && (
+            (isVerifiedUser()
+              && incoming().ownerUid == request.auth.uid
+              && (exists(/databases/$(database)/documents/members/$(memberId)) || existsAfter(/databases/$(database)/documents/members/$(memberId))))
+            || (!isVerifiedUser()
+              && incoming().ownerUid == 'mandiri'
+              && !exists(/databases/$(database)/documents/members/$(memberId))
+              && existsAfter(/databases/$(database)/documents/members/$(memberId))
+              && getAfter(/databases/$(database)/documents/members/$(memberId)).data.ownerUid == 'mandiri')
+          );
+        allow update: if isValidId(memberId)
+          && isVerifiedUser()
+          && isValidMemberPii(incoming())
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().updatedAt == request.time
+          && (isAdmin() || existing().ownerUid == request.auth.uid)
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'nomorWa', 'tempatLahir', 'tanggalLahir', 'alamatDomisili', 'berkasNama', 'berkasDataUrl', 'updatedAt'
+          ]);
+        allow delete: if isValidId(memberId) && (isAdmin() || (isVerifiedUser() && existing().ownerUid == request.auth.uid));
+      }
+    }
+
+    match /broadcasts/{broadcastId} {
+      allow get: if isValidId(broadcastId) && resource.data.orgCode == 'NURSYAH';
+      allow list: if resource.data.orgCode == 'NURSYAH';
+      allow create: if isValidId(broadcastId)
+        && isVerifiedUser()
+        && isValidBroadcast(incoming())
+        && incoming().pengirimUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(broadcastId) && (isAdmin() || (isVerifiedUser() && existing().pengirimUid == request.auth.uid));
+    }
+
+    match /letters/{letterId} {
+      allow get: if isValidId(letterId) && resource.data.orgCode == 'NURSYAH';
+      allow list: if resource.data.orgCode == 'NURSYAH';
+      allow create: if isValidId(letterId)
+        && isVerifiedUser()
+        && isValidLetter(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(letterId)
+        && isVerifiedUser()
+        && isValidLetter(incoming())
+        && incoming().authorUid == existing().authorUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (isAdmin() || existing().authorUid == request.auth.uid)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'nomorSurat', 'jenisSurat', 'perihal', 'isiSurat', 'targetWilayah',
+          'targetRanting', 'tanggalSurat', 'penandatangan', 'lampiranNama',
+          'lampiranDataUrl', 'statusDistribusi', 'updatedAt'
+        ]);
+      allow delete: if isValidId(letterId) && (isAdmin() || (isVerifiedUser() && existing().authorUid == request.auth.uid));
+    }
+
+    match /documentation/{docId} {
+      allow get: if isValidId(docId) && resource.data.orgCode == 'NURSYAH';
+      allow list: if resource.data.orgCode == 'NURSYAH';
+      allow create: if isValidId(docId)
+        && isVerifiedUser()
+        && isValidDocItem(incoming())
+        && incoming().uploaderUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(docId) && (isAdmin() || (isVerifiedUser() && existing().uploaderUid == request.auth.uid));
+    }
+
+    match /admin_vault/{vaultId} {
+      allow get: if isValidId(vaultId) && isAdmin();
+      allow list: if isVerifiedUser() && (request.auth.token.email == 'fadliyuliansyah733@gmail.com' || resource.data.uploadedByUid == request.auth.uid);
+      allow create: if isValidId(vaultId)
+        && isAdmin()
+        && isValidAdminVaultDoc(incoming())
+        && incoming().uploadedByUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(vaultId) && isAdmin();
+    }
+
+    match /backups/{backupId} {
+      allow get: if isValidId(backupId) && isAdmin();
+      allow list: if isVerifiedUser() && (request.auth.token.email == 'fadliyuliansyah733@gmail.com' || resource.data.createdByUid == request.auth.uid);
+      allow create: if isValidId(backupId)
+        && isAdmin()
+        && isValidBackupLog(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(backupId) && isAdmin();
+    }
+  }
+}
