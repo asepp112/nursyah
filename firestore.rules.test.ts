@@ -11,12 +11,12 @@ export const DIRTY_DOZEN_CASES = [
   { id: 4, name: 'Shadow Field Injection on Member Create', path: '/members/m1', expected: 'PERMISSION_DENIED' },
   { id: 5, name: 'Self-Privilege Escalation on /admins', path: '/admins/attacker', expected: 'PERMISSION_DENIED' },
   { id: 6, name: 'PII Scraping Attack by Non-Owner', path: '/members/m1/private/pii', expected: 'PERMISSION_DENIED' },
-  { id: 7, name: 'Owner Spoofing / Forged Promotion History on Member Create', path: '/members/m2', expected: 'PERMISSION_DENIED' },
+  { id: 7, name: 'Owner Spoofing on Verified Member Create', path: '/members/m2', expected: 'PERMISSION_DENIED' },
   { id: 8, name: 'Immutable CreatedAt Tampering', path: '/members/m1', expected: 'PERMISSION_DENIED' },
   { id: 9, name: 'Client Timestamp Forgery on Broadcast', path: '/broadcasts/b1', expected: 'PERMISSION_DENIED' },
   { id: 10, name: 'ID Poisoning (>128 chars / invalid chars)', path: '/members/invalid id with spaces', expected: 'PERMISSION_DENIED' },
   { id: 11, name: 'Unbounded Array / Payload Exhaustion', path: '/members/m3', expected: 'PERMISSION_DENIED' },
-  { id: 12, name: 'Unauthenticated Member Update / Existing PII Overwrite', path: '/members/m1/private/pii', expected: 'PERMISSION_DENIED' }
+  { id: 12, name: 'Unauthenticated Arbitrary Profile / Existing PII Overwrite', path: '/members/m1/private/pii', expected: 'PERMISSION_DENIED' }
 ] as const;
 
 export function verifyRulesPresence(): boolean {

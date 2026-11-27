@@ -7,9 +7,12 @@ interface AdminEmailsModalProps {
   open: boolean;
   adminEmails: AdminEmailRecord[];
   currentUserEmail: string;
+  rootAdminRevoked: boolean;
   onClose: () => void;
   onSaveAdminEmail: (slot: 1 | 2 | 3, email: string, nama: string, jabatan: string) => Promise<void>;
   onRemoveAdminEmail: (emailId: string) => Promise<void>;
+  onDeleteRootAdmin: () => Promise<void>;
+  onRestoreRootAdmin: () => Promise<void>;
 }
 
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
@@ -18,9 +21,12 @@ export const AdminEmailsModal: React.FC<AdminEmailsModalProps> = ({
   open,
   adminEmails,
   currentUserEmail,
+  rootAdminRevoked,
   onClose,
   onSaveAdminEmail,
   onRemoveAdminEmail,
+  onDeleteRootAdmin,
+  onRestoreRootAdmin,
 }) => {
   const [slotForms, setSlotForms] = useState<
     Record<1 | 2 | 3, { email: string; nama: string; jabatan: string }>
@@ -30,6 +36,8 @@ export const AdminEmailsModal: React.FC<AdminEmailsModalProps> = ({
     3: { email: '', nama: '', jabatan: '' },
   });
   const [savingSlot, setSavingSlot] = useState<1 | 2 | 3 | null>(null);
+  const [confirmDeleteRoot, setConfirmDeleteRoot] = useState(false);
+  const [rootBusy, setRootBusy] = useState(false);
   const [slotError, setSlotError] = useState('');
   const [slotSuccess, setSlotSuccess] = useState('');
 
@@ -47,6 +55,7 @@ export const AdminEmailsModal: React.FC<AdminEmailsModalProps> = ({
       }
     });
     setSlotForms(next);
+    setConfirmDeleteRoot(false);
     setSlotError('');
     setSlotSuccess('');
   }, [open, adminEmails]);
@@ -72,8 +81,8 @@ export const AdminEmailsModal: React.FC<AdminEmailsModalProps> = ({
       setSlotError(`Slot ${slot}: Masukkan alamat email Google yang valid (contoh: nama@gmail.com).`);
       return;
     }
-    if (cleanEmail === ROOT_ADMIN_EMAIL.toLowerCase()) {
-      setSlotError(`Slot ${slot}: ${ROOT_ADMIN_EMAIL} sudah menjadi Admin Utama secara permanen.`);
+    if (cleanEmail === ROOT_ADMIN_EMAIL.toLowerCase() && !rootAdminRevoked) {
+      setSlotError(`Slot ${slot}: ${ROOT_ADMIN_EMAIL} sudah aktif sebagai Admin Utama.`);
       return;
     }
     const duplicate = adminEmails.find((a) => a.email === cleanEmail && a.slot !== slot);
@@ -118,6 +127,47 @@ export const AdminEmailsModal: React.FC<AdminEmailsModalProps> = ({
     }
   };
 
+  const handleRequestDeleteRoot = () => {
+    setSlotError('');
+    setSlotSuccess('');
+    if (adminEmails.length === 0) {
+      setSlotError(
+        'Tambahkan minimal 1 Email Admin pada Slot 1–3 terlebih dahulu sebelum menghapus Admin Utama agar aplikasi tidak kehilangan semua admin.'
+      );
+      return;
+    }
+    setConfirmDeleteRoot(true);
+  };
+
+  const handleConfirmDeleteRoot = async () => {
+    setSlotError('');
+    setSlotSuccess('');
+    setRootBusy(true);
+    try {
+      await onDeleteRootAdmin();
+      setConfirmDeleteRoot(false);
+      setSlotSuccess(`Akses Admin Utama (${ROOT_ADMIN_EMAIL}) telah dihapus.`);
+    } catch (err) {
+      setSlotError(err instanceof Error ? err.message : 'Gagal menghapus Admin Utama.');
+    } finally {
+      setRootBusy(false);
+    }
+  };
+
+  const handleRestoreRoot = async () => {
+    setSlotError('');
+    setSlotSuccess('');
+    setRootBusy(true);
+    try {
+      await onRestoreRootAdmin();
+      setSlotSuccess(`Admin Utama (${ROOT_ADMIN_EMAIL}) diaktifkan kembali.`);
+    } catch (err) {
+      setSlotError(err instanceof Error ? err.message : 'Gagal mengaktifkan kembali Admin Utama.');
+    } finally {
+      setRootBusy(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 bg-slate-900/60 flex items-end sm:items-center justify-center sm:p-4"
@@ -152,13 +202,70 @@ export const AdminEmailsModal: React.FC<AdminEmailsModalProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          <div className="p-3.5 bg-slate-900 text-white rounded-xl flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold text-amber-400">Admin Utama (Pemilik Sistem)</p>
-              <p className="text-sm font-mono truncate mt-0.5">{ROOT_ADMIN_EMAIL}</p>
+          {!rootAdminRevoked ? (
+            <div className="p-4 bg-slate-900 text-white rounded-xl space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-amber-400">Admin Utama (Pemilik Sistem)</p>
+                  <p className="text-sm font-mono truncate mt-0.5">{ROOT_ADMIN_EMAIL}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs font-semibold text-emerald-300">Aktif</span>
+                  {!confirmDeleteRoot && (
+                    <button
+                      type="button"
+                      disabled={rootBusy}
+                      onClick={handleRequestDeleteRoot}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-red-700 hover:bg-red-800 text-white rounded-lg cursor-pointer disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Hapus Admin Utama</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+              {confirmDeleteRoot && (
+                <div className="p-3 bg-slate-800 border border-slate-700 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-200">
+                    Yakin hapus akses Admin Utama <strong className="font-mono">{ROOT_ADMIN_EMAIL}</strong>?
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={rootBusy}
+                      onClick={() => setConfirmDeleteRoot(false)}
+                      className="px-3 py-1.5 text-xs font-medium bg-slate-700 hover:bg-slate-600 text-white rounded-lg cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      disabled={rootBusy}
+                      onClick={handleConfirmDeleteRoot}
+                      className="px-3 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg cursor-pointer disabled:opacity-60"
+                    >
+                      {rootBusy ? 'Menghapus...' : 'Ya, Hapus'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-            <span className="text-xs font-semibold text-emerald-300">Aktif Permanen</span>
-          </div>
+          ) : (
+            <div className="p-3.5 bg-slate-100 border border-slate-200 text-slate-700 rounded-xl flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold text-slate-500">Admin Utama (Sudah Dihapus)</p>
+                <p className="text-sm font-mono truncate mt-0.5 line-through text-slate-500">{ROOT_ADMIN_EMAIL}</p>
+              </div>
+              <button
+                type="button"
+                disabled={rootBusy}
+                onClick={handleRestoreRoot}
+                className="px-3 py-1.5 text-xs font-semibold bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                {rootBusy ? 'Memulihkan...' : 'Aktifkan Kembali'}
+              </button>
+            </div>
+          )}
 
           <p className="text-xs text-slate-600 leading-relaxed">
             Saat pengguna masuk dengan salah satu dari 3 email di bawah ini, fitur Premium langsung terbuka: <strong>Kelola Wilayah/Alamat</strong>, <strong>Brankas Dokumen Admin</strong>, <strong>Edit Sejarah Sabuk</strong>, dan <strong>Backup &amp; Pemulihan Data</strong>.

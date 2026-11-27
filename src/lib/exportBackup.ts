@@ -97,6 +97,14 @@ export function getLocalAutoBackupMeta(): { savedAt: string; totalMembers: numbe
   }
 }
 
+export function clearLocalAutoBackup(): void {
+  try {
+    localStorage.removeItem(AUTO_BACKUP_STORAGE_KEY);
+  } catch {
+    // Ignore storage access errors
+  }
+}
+
 export function downloadFullBackupJson(payload: Omit<FullBackupPayload, 'version' | 'exportedAt' | 'organization'>): void {
   const full: FullBackupPayload = {
     version: '1.0',

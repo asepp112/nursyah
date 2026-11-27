@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Award, Edit3, Save, X } from 'lucide-react';
 import { BeltLevel, Member } from '../types/org';
-import { DEFAULT_BELT_LEVELS } from '../constants/beltsAndSeed';
+import { isBeltEligibleForKta, resolveOrderedBelts } from '../constants/beltsAndSeed';
 
 interface BeltClassificationViewProps {
   beltLevels: BeltLevel[];
@@ -16,10 +16,7 @@ export const BeltClassificationView: React.FC<BeltClassificationViewProps> = ({
   isAdmin,
   onSaveBeltNote,
 }) => {
-  const levels = useMemo(() => {
-    const source = beltLevels.length > 0 ? beltLevels : (DEFAULT_BELT_LEVELS as BeltLevel[]);
-    return [...source].sort((a, b) => a.order - b.order);
-  }, [beltLevels]);
+  const levels = useMemo(() => resolveOrderedBelts(beltLevels), [beltLevels]);
 
   const memberCountByBelt = useMemo(() => {
     const map = new Map<string, number>();
@@ -60,7 +57,7 @@ export const BeltClassificationView: React.FC<BeltClassificationViewProps> = ({
             Klasifikasi Tingkatan Sabuk & Sejarah Tingkat
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Jenjang resmi Aliran Nursyah dari Sabuk Kuning Mas, Sabuk Putih, hingga Tingkat Strip 1 sampai Strip 17 beserta catatan sejarah tiap tingkatan.
+            Jenjang resmi Aliran Nursyah dari Sabuk Kuning Mas, Sabuk Putih, Sabuk Hitam, hingga Tingkat Strip 1 sampai Strip 17 beserta catatan sejarah tiap tingkatan.
           </p>
         </div>
         <div className="text-xs font-mono tabular-nums text-slate-500 shrink-0">
@@ -74,6 +71,8 @@ export const BeltClassificationView: React.FC<BeltClassificationViewProps> = ({
           const count = memberCountByBelt.get(lvl.name) || 0;
           const isGold = lvl.name === 'Sabuk Kuning Mas';
           const isWhite = lvl.name === 'Sabuk Putih';
+          const isBlack = lvl.name === 'Sabuk Hitam';
+          const ktaEligible = isBeltEligibleForKta(lvl.name, lvl.order);
 
           return (
             <article
@@ -83,13 +82,17 @@ export const BeltClassificationView: React.FC<BeltClassificationViewProps> = ({
               <div className="space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1 min-w-0">
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                       <span className="font-mono tabular-nums">Urutan {String(lvl.order).padStart(2, '0')}</span>
                       <span aria-hidden="true">·</span>
                       <span>{lvl.category}</span>
                       <span aria-hidden="true">·</span>
                       <span className="font-mono tabular-nums font-medium text-slate-700">
                         {count} anggota
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span className={ktaEligible ? 'text-emerald-700 font-medium' : 'text-amber-700 font-medium'}>
+                        {ktaEligible ? 'Bisa cetak KTA' : 'Belum cetak KTA'}
                       </span>
                     </div>
                     <h2 className="text-base font-bold text-slate-900">{lvl.name}</h2>
@@ -102,12 +105,17 @@ export const BeltClassificationView: React.FC<BeltClassificationViewProps> = ({
                         ? 'bg-amber-400 border-amber-500 text-amber-950'
                         : isWhite
                         ? 'bg-slate-50 border-slate-300 text-slate-700'
+                        : isBlack
+                        ? 'bg-slate-950 border-slate-900 text-amber-300'
                         : 'bg-slate-900 border-slate-800 text-white'
                     }`}
                     title={lvl.name}
                   >
                     {lvl.stripeCount === 0 ? (
-                      <Award className="w-4 h-4" />
+                      <span className="inline-flex items-center gap-1 text-[11px] font-mono font-semibold">
+                        <Award className="w-3.5 h-3.5" />
+                        <span>{isBlack ? 'HITAM' : isWhite ? 'PUTIH' : 'KUNING'}</span>
+                      </span>
                     ) : (
                       <span className="text-[11px] font-mono font-semibold tabular-nums">
                         {lvl.stripeCount} STRIP
@@ -130,7 +138,7 @@ export const BeltClassificationView: React.FC<BeltClassificationViewProps> = ({
                 </div>
               </div>
 
-              {isAdmin && beltLevels.length > 0 && (
+              {isAdmin && (
                 <div className="pt-2 border-t border-slate-100 flex justify-end">
                   <button
                     type="button"

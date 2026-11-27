@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   Award,
   Bell,
   DatabaseBackup,
@@ -9,6 +10,7 @@ import {
   LogOut,
   Menu,
   ShieldCheck,
+  Trash2,
   Users,
   Wrench,
   X,
@@ -24,7 +26,9 @@ import {
   collection,
   deleteDoc,
   doc,
+  DocumentReference,
   getDoc,
+  getDocs,
   limit,
   onSnapshot,
   query,
@@ -58,12 +62,12 @@ import {
   ROOT_ADMIN_EMAIL,
 } from './lib/firebase';
 import {
-  DEFAULT_BELT_LEVELS,
-  DEFAULT_REGIONS,
-  SAMPLE_MEMBERS_SEED,
-} from './constants/beltsAndSeed';
-import { FullBackupPayload, saveLocalAutoBackup } from './lib/exportBackup';
+  clearLocalAutoBackup,
+  FullBackupPayload,
+  saveLocalAutoBackup,
+} from './lib/exportBackup';
 import { sanitizeId } from './lib/mediaUtils';
+import { isBeltEligibleForKta } from './constants/beltsAndSeed';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DashboardOverview } from './components/DashboardOverview';
 import { MemberManagementView } from './components/MemberManagementView';
@@ -79,6 +83,7 @@ function MainApp() {
   const [authError, setAuthError] = useState('');
   const [signingIn, setSigningIn] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [rootAdminRevoked, setRootAdminRevoked] = useState(false);
   const [showSignInModal, setShowSignInModal] = useState(false);
   const [showAdminEmailsModal, setShowAdminEmailsModal] = useState(false);
   const [addMemberSignal, setAddMemberSignal] = useState(0);
@@ -101,7 +106,8 @@ function MainApp() {
   const [vaultDocs, setVaultDocs] = useState<AdminVaultDoc[]>([]);
   const [backupLogs, setBackupLogs] = useState<BackupLog[]>([]);
   const [adminEmails, setAdminEmails] = useState<AdminEmailRecord[]>([]);
-  const [seeding, setSeeding] = useState(false);
+  const [clearingAllData, setClearingAllData] = useState(false);
+  const [showClearDataModal, setShowClearDataModal] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
   const [syncWarning, setSyncWarning] = useState('');
 
@@ -119,27 +125,40 @@ function MainApp() {
     setTimeout(() => setToastMsg(''), 3200);
   };
 
+  const checkAdminStatus = async (u: User): Promise<{ adminOk: boolean; rootRevoked: boolean }> => {
+    if (!u.emailVerified) return { adminOk: false, rootRevoked: false };
+    const lowerEmail = (u.email || '').toLowerCase();
+    try {
+      const [rootSnap, adminSnap, emailAdminSnap] = await Promise.all([
+        getDoc(doc(db, 'admin_config', 'root')).catch(() => null),
+        getDoc(doc(db, 'admins', u.uid)).catch(() => null),
+        lowerEmail ? getDoc(doc(db, 'admin_emails', lowerEmail)).catch(() => null) : Promise.resolve(null),
+      ]);
+      const rootRevoked = Boolean(rootSnap?.exists());
+      const isRoot = !rootRevoked && lowerEmail === ROOT_ADMIN_EMAIL.toLowerCase();
+      const adminOk = Boolean(isRoot || adminSnap?.exists() || emailAdminSnap?.exists());
+      return { adminOk, rootRevoked };
+    } catch {
+      return { adminOk: false, rootRevoked: false };
+    }
+  };
+
+  const verifyAdminStatus = async (u: User): Promise<boolean> => {
+    const { adminOk, rootRevoked } = await checkAdminStatus(u);
+    setRootAdminRevoked(rootRevoked);
+    return adminOk;
+  };
+
   // Auth Listener & Admin Verification (Root Admin + UID Admins + 3 Email Admin Premium)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u && u.emailVerified) {
-        const lowerEmail = (u.email || '').toLowerCase();
-        if (lowerEmail === ROOT_ADMIN_EMAIL.toLowerCase()) {
-          setIsAdmin(true);
-        } else {
-          try {
-            const [adminSnap, emailAdminSnap] = await Promise.all([
-              getDoc(doc(db, 'admins', u.uid)).catch(() => null),
-              lowerEmail ? getDoc(doc(db, 'admin_emails', lowerEmail)).catch(() => null) : Promise.resolve(null),
-            ]);
-            setIsAdmin(Boolean(adminSnap?.exists() || emailAdminSnap?.exists()));
-          } catch {
-            setIsAdmin(false);
-          }
-        }
+        const adminOk = await verifyAdminStatus(u);
+        setIsAdmin(adminOk);
       } else {
         setIsAdmin(false);
+        setRootAdminRevoked(false);
       }
       setAuthReady(true);
     });
@@ -246,10 +265,11 @@ function MainApp() {
     );
 
     if (isSignedIn && isAdmin && user) {
-      const qVault =
-        user.email === ROOT_ADMIN_EMAIL
-          ? query(collection(db, 'admin_vault'), limit(100))
-          : query(collection(db, 'admin_vault'), where('uploadedByUid', '==', user.uid), limit(100));
+      const qVault = query(
+        collection(db, 'admin_vault'),
+        where('uploadedByUid', '==', user.uid),
+        limit(100)
+      );
       unsubs.push(
         onSnapshot(
           qVault,
@@ -260,10 +280,11 @@ function MainApp() {
         )
       );
 
-      const qBackups =
-        user.email === ROOT_ADMIN_EMAIL
-          ? query(collection(db, 'backups'), limit(50))
-          : query(collection(db, 'backups'), where('createdByUid', '==', user.uid), limit(50));
+      const qBackups = query(
+        collection(db, 'backups'),
+        where('createdByUid', '==', user.uid),
+        limit(50)
+      );
       unsubs.push(
         onSnapshot(
           qBackups,
@@ -274,19 +295,94 @@ function MainApp() {
         )
       );
 
-      const qAdminEmails =
-        user.email?.toLowerCase() === ROOT_ADMIN_EMAIL.toLowerCase()
-          ? query(collection(db, 'admin_emails'), limit(10))
-          : query(collection(db, 'admin_emails'), where('addedBy', '==', user.uid), limit(10));
+      // Watch /admin_config/root so root admin deletion/restoration syncs immediately
       unsubs.push(
         onSnapshot(
-          qAdminEmails,
+          doc(db, 'admin_config', 'root'),
+          async (snap) => {
+            const revoked = snap.exists();
+            setRootAdminRevoked(revoked);
+            if (revoked && (user.email || '').toLowerCase() === ROOT_ADMIN_EMAIL.toLowerCase()) {
+              const { adminOk } = await checkAdminStatus(user);
+              setIsAdmin(adminOk);
+              if (!adminOk) {
+                setShowAdminEmailsModal(false);
+              }
+            }
+          },
+          (err) => logFirestoreError(err, OperationType.GET, 'admin_config/root')
+        )
+      );
+
+      let addedList: AdminEmailRecord[] = [];
+      let slotRecords: AdminEmailRecord[] = [];
+      let selfRecord: AdminEmailRecord | null = null;
+
+      const mergeAdminEmails = () => {
+        const map = new Map<string, AdminEmailRecord>();
+        [...addedList, ...slotRecords, ...(selfRecord ? [selfRecord] : [])].forEach((item) => {
+          map.set(item.id, item);
+        });
+        const merged = Array.from(map.values());
+        merged.sort((a, b) => a.slot - b.slot);
+        setAdminEmails(merged);
+      };
+
+      const qAddedAdminEmails = query(
+        collection(db, 'admin_emails'),
+        where('addedBy', '==', user.uid),
+        limit(10)
+      );
+      unsubs.push(
+        onSnapshot(
+          qAddedAdminEmails,
           (snap) => {
-            const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as AdminEmailRecord));
-            list.sort((a, b) => a.slot - b.slot);
-            setAdminEmails(list);
+            addedList = snap.docs.map((d) => ({ id: d.id, ...d.data() } as AdminEmailRecord));
+            mergeAdminEmails();
           },
           (err) => logFirestoreError(err, OperationType.LIST, 'admin_emails')
+        )
+      );
+
+      const lowerUserEmail = (user.email || '').toLowerCase();
+      if (lowerUserEmail) {
+        unsubs.push(
+          onSnapshot(
+            doc(db, 'admin_emails', lowerUserEmail),
+            (snap) => {
+              selfRecord = snap.exists()
+                ? ({ id: snap.id, ...snap.data() } as AdminEmailRecord)
+                : null;
+              mergeAdminEmails();
+            },
+            () => {}
+          )
+        );
+      }
+
+      unsubs.push(
+        onSnapshot(
+          doc(db, 'admin_config', 'slots'),
+          async (snap) => {
+            if (!snap.exists()) {
+              slotRecords = [];
+              mergeAdminEmails();
+              return;
+            }
+            const data = snap.data() as { slot1?: string; slot2?: string; slot3?: string };
+            const emails = [data.slot1, data.slot2, data.slot3]
+              .filter((e): e is string => Boolean(e && e.trim()))
+              .map((e) => e.trim().toLowerCase());
+            const fetched = await Promise.all(
+              emails.map(async (em) => {
+                const s = await getDoc(doc(db, 'admin_emails', em)).catch(() => null);
+                return s?.exists() ? ({ id: s.id, ...s.data() } as AdminEmailRecord) : null;
+              })
+            );
+            slotRecords = fetched.filter((r): r is AdminEmailRecord => Boolean(r));
+            mergeAdminEmails();
+          },
+          () => {}
         )
       );
     } else {
@@ -312,23 +408,32 @@ function MainApp() {
   }, [regions, beltLevels, members, broadcasts, letters]);
 
   const handleSignIn = async () => {
+    if (signingIn) return;
     setAuthError('');
     setSigningIn(true);
     try {
       const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
       const cred = await signInWithPopup(auth, provider);
       if (cred.user && !cred.user.emailVerified) {
         setAuthError('Email Google Anda belum terverifikasi. Gunakan akun Google dengan email terverifikasi.');
-      } else {
+      } else if (cred.user) {
+        const adminOk = await verifyAdminStatus(cred.user);
+        setIsAdmin(adminOk);
         setShowSignInModal(false);
-        showToast(`Selamat datang, ${cred.user.displayName || cred.user.email || 'Anggota'}.`);
+        showToast(
+          adminOk
+            ? `Selamat datang Admin (${cred.user.email}). Akses penuh aktif.`
+            : `Masuk sebagai ${cred.user.email || 'Anggota'}.`
+        );
       }
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
       if (code === 'auth/popup-blocked') {
-        setAuthError('Jendela popup Google diblokir browser. Izinkan popup untuk situs ini lalu klik Masuk lagi.');
-      } else if (code === 'auth/popup-closed-by-user') {
-        setAuthError('Login dibatalkan sebelum selesai.');
+        setAuthError(
+          'Popup Google diblokir oleh browser. Izinkan popup untuk situs ini lalu klik Lanjutkan dengan Google.'
+        );
+        setShowSignInModal(true);
       } else {
         setAuthError(err instanceof Error ? err.message : 'Gagal masuk dengan Google.');
       }
@@ -342,70 +447,99 @@ function MainApp() {
     showToast('Anda telah keluar dari akun.');
   };
 
-  // Admin 1-Click Data Bootstrap
-  const handleBootstrapData = async () => {
+  // Admin 1-Click Clear All Data for Production Publish
+  const handleClearAllData = async () => {
     if (!user || !isAdmin) return;
-    setSeeding(true);
+    setClearingAllData(true);
     try {
-      const batch = writeBatch(db);
-      DEFAULT_BELT_LEVELS.forEach((b) => {
-        const { id, ...beltPayload } = b;
-        batch.set(doc(db, 'belt_levels', id), {
-          ...beltPayload,
-          updatedAt: serverTimestamp(),
-        });
+      const refsToDelete: DocumentReference[] = [];
+
+      const [
+        membersSnap,
+        regionsSnap,
+        broadcastsSnap,
+        lettersSnap,
+        docsSnap,
+        vaultSnap,
+        backupsSnap,
+      ] = await Promise.all([
+        getDocs(query(collection(db, 'members'), where('orgCode', '==', 'NURSYAH'))),
+        getDocs(query(collection(db, 'regions'), where('orgCode', '==', 'NURSYAH'))),
+        getDocs(query(collection(db, 'broadcasts'), where('orgCode', '==', 'NURSYAH'))),
+        getDocs(query(collection(db, 'letters'), where('orgCode', '==', 'NURSYAH'))),
+        getDocs(query(collection(db, 'documentation'), where('orgCode', '==', 'NURSYAH'))),
+        getDocs(query(collection(db, 'admin_vault'), where('uploadedByUid', '==', user.uid))),
+        getDocs(query(collection(db, 'backups'), where('createdByUid', '==', user.uid))),
+      ]);
+
+      membersSnap.docs.forEach((d) => {
+        refsToDelete.push(doc(db, 'members', d.id, 'private', 'pii'));
+        refsToDelete.push(d.ref);
       });
-      DEFAULT_REGIONS.forEach((r) => {
-        const { id, ...regionPayload } = r;
-        batch.set(doc(db, 'regions', id), {
-          ...regionPayload,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      });
-      SAMPLE_MEMBERS_SEED.forEach((m) => {
-        const { pii, id, ...publicFields } = m;
-        batch.set(doc(db, 'members', id), {
-          ...publicFields,
-          ownerUid: user.uid,
-          orgCode: 'NURSYAH',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-        batch.set(doc(db, 'members', id, 'private', 'pii'), {
-          ...pii,
-          ownerUid: user.uid,
-          updatedAt: serverTimestamp(),
-        });
-      });
-      await batch.commit();
-      showToast('Data awal wilayah, 19 tingkatan sabuk, dan contoh anggota berhasil dimuat.');
+      regionsSnap.docs.forEach((d) => refsToDelete.push(d.ref));
+      broadcastsSnap.docs.forEach((d) => refsToDelete.push(d.ref));
+      lettersSnap.docs.forEach((d) => refsToDelete.push(d.ref));
+      docsSnap.docs.forEach((d) => refsToDelete.push(d.ref));
+      vaultSnap.docs.forEach((d) => refsToDelete.push(d.ref));
+      backupsSnap.docs.forEach((d) => refsToDelete.push(d.ref));
+
+      for (let i = 0; i < refsToDelete.length; i += 200) {
+        const chunk = refsToDelete.slice(i, i + 200);
+        const batch = writeBatch(db);
+        chunk.forEach((ref) => batch.delete(ref));
+        await batch.commit();
+      }
+
+      clearLocalAutoBackup();
+      setPiiCache({});
+      setShowClearDataModal(false);
+      showToast('Semua data uji coba berhasil dikosongkan. Aplikasi siap dipublikasikan.');
     } catch (err) {
-      showToast(logFirestoreError(err, OperationType.WRITE, 'bootstrap'));
+      showToast(logFirestoreError(err, OperationType.DELETE, 'clear_all_data'));
     } finally {
-      setSeeding(false);
+      setClearingAllData(false);
     }
   };
 
   // CRUD Handlers
+  const sanitizeHistoryList = (list?: Member['riwayatTingkat']) =>
+    (list || []).slice(0, 25).map((r) => ({
+      fromSabuk: String(r.fromSabuk || 'Sabuk Kuning Mas').slice(0, 60),
+      toSabuk: String(r.toSabuk || 'Sabuk Putih').slice(0, 60),
+      tanggal: String(r.tanggal || new Date().toISOString().slice(0, 10)).slice(0, 24),
+      penguji: String(r.penguji || 'Dewan Penguji').slice(0, 120),
+      catatan: String(r.catatan || '').slice(0, 500),
+    }));
+
   const handleCreateMember = async (
     memberData: Omit<Member, 'id' | 'ownerUid' | 'orgCode' | 'createdAt' | 'updatedAt'>,
     piiData: Omit<MemberPii, 'ownerUid' | 'updatedAt'> | null
   ) => {
     const ownerUid = user && user.emailVerified ? user.uid : 'mandiri';
     const memberId = `mbr-${Date.now()}-${sanitizeId(memberData.nia).slice(0, 24)}`;
+    const cleanHistory = sanitizeHistoryList(memberData.riwayatTingkat);
+    const validTahunPutih =
+      memberData.tahunDilantikPutih && /^[0-9]{4}$/.test(memberData.tahunDilantikPutih)
+        ? memberData.tahunDilantikPutih
+        : undefined;
     try {
       const batch = writeBatch(db);
-      batch.set(doc(db, 'members', memberId), {
+      const docPayload: Record<string, unknown> = {
         ...memberData,
-        riwayatTingkat: [],
+        riwayatTingkat: cleanHistory,
         sabukOrder: Math.round(Number(memberData.sabukOrder)),
         ...(memberData.alamatLengkap ? { alamatLengkap: memberData.alamatLengkap.slice(0, 350) } : {}),
         ownerUid,
         orgCode: 'NURSYAH',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
+      };
+      if (validTahunPutih) {
+        docPayload.tahunDilantikPutih = validTahunPutih;
+      } else {
+        delete docPayload.tahunDilantikPutih;
+      }
+      batch.set(doc(db, 'members', memberId), docPayload);
       if (piiData) {
         batch.set(doc(db, 'members', memberId, 'private', 'pii'), {
           ...piiData,
@@ -438,55 +572,90 @@ function MainApp() {
       alamatLengkap?: string;
       sabuk: string;
       sabukOrder: number;
+      tahunDilantikPutih?: string;
       fotoProfil?: string;
       statusAktif: 'Aktif' | 'Cuti' | 'Alumni';
+      riwayatTingkat?: Member['riwayatTingkat'];
       berkasChecklist: Member['berkasChecklist'];
     },
     piiData: Omit<MemberPii, 'ownerUid' | 'updatedAt'> | null
   ) => {
-    if (!user) return;
+    const isVerified = Boolean(user && user.emailVerified);
+    if (!isVerified && member.ownerUid !== 'mandiri') return;
+
+    const cleanHistory =
+      memberUpdates.riwayatTingkat !== undefined
+        ? sanitizeHistoryList(memberUpdates.riwayatTingkat)
+        : sanitizeHistoryList(member.riwayatTingkat);
+    const validTahunPutih =
+      memberUpdates.tahunDilantikPutih && /^[0-9]{4}$/.test(memberUpdates.tahunDilantikPutih)
+        ? memberUpdates.tahunDilantikPutih
+        : undefined;
+    const nextOrder = Math.round(Number(memberUpdates.sabukOrder));
+    const graduatedFromKuning = member.sabuk === 'Sabuk Kuning Mas' && nextOrder >= 2;
+
     try {
       const batch = writeBatch(db);
-      const memberPayload: Record<string, unknown> = {
-        namaLengkap: memberUpdates.namaLengkap.slice(0, 120),
-        provinsi: memberUpdates.provinsi.slice(0, 120),
-        kabupaten: memberUpdates.kabupaten.slice(0, 120),
-        kecamatan: memberUpdates.kecamatan.slice(0, 120),
-        ranting: memberUpdates.ranting.slice(0, 120),
-        alamatLengkap: (memberUpdates.alamatLengkap || '').slice(0, 350),
-        sabuk: memberUpdates.sabuk.slice(0, 60),
-        sabukOrder: Math.round(Number(memberUpdates.sabukOrder)),
-        statusAktif: memberUpdates.statusAktif,
-        berkasChecklist: memberUpdates.berkasChecklist,
-        updatedAt: serverTimestamp(),
-      };
-      if (isAdmin) {
-        memberPayload.nia = memberUpdates.nia;
-      }
-      if (memberUpdates.fotoProfil) {
-        memberPayload.fotoProfil = memberUpdates.fotoProfil;
-      }
-      batch.update(doc(db, 'members', member.id), memberPayload);
+      if (!isVerified && member.ownerUid === 'mandiri') {
+        const selfUpdatePayload: Record<string, unknown> = {
+          sabuk: memberUpdates.sabuk.slice(0, 60),
+          sabukOrder: nextOrder,
+          riwayatTingkat: cleanHistory,
+          updatedAt: serverTimestamp(),
+        };
+        if (validTahunPutih) {
+          selfUpdatePayload.tahunDilantikPutih = validTahunPutih;
+        }
+        if (graduatedFromKuning && memberUpdates.nia && memberUpdates.nia !== member.nia) {
+          selfUpdatePayload.nia = memberUpdates.nia.slice(0, 40);
+        }
+        batch.update(doc(db, 'members', member.id), selfUpdatePayload);
+      } else if (user) {
+        const memberPayload: Record<string, unknown> = {
+          namaLengkap: memberUpdates.namaLengkap.slice(0, 120),
+          provinsi: memberUpdates.provinsi.slice(0, 120),
+          kabupaten: memberUpdates.kabupaten.slice(0, 120),
+          kecamatan: memberUpdates.kecamatan.slice(0, 120),
+          ranting: memberUpdates.ranting.slice(0, 120),
+          alamatLengkap: (memberUpdates.alamatLengkap || '').slice(0, 350),
+          sabuk: memberUpdates.sabuk.slice(0, 60),
+          sabukOrder: nextOrder,
+          statusAktif: memberUpdates.statusAktif,
+          riwayatTingkat: cleanHistory,
+          berkasChecklist: memberUpdates.berkasChecklist,
+          updatedAt: serverTimestamp(),
+        };
+        if (validTahunPutih) {
+          memberPayload.tahunDilantikPutih = validTahunPutih;
+        }
+        if (isAdmin || (graduatedFromKuning && memberUpdates.nia !== member.nia)) {
+          memberPayload.nia = memberUpdates.nia.slice(0, 40);
+        }
+        if (memberUpdates.fotoProfil) {
+          memberPayload.fotoProfil = memberUpdates.fotoProfil;
+        }
+        batch.update(doc(db, 'members', member.id), memberPayload);
 
-      if (piiData && (isAdmin || member.ownerUid === user.uid)) {
-        const piiRef = doc(db, 'members', member.id, 'private', 'pii');
-        const existingPiiSnap = await getDoc(piiRef).catch(() => null);
-        if (existingPiiSnap?.exists()) {
-          batch.update(piiRef, {
-            ...piiData,
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          batch.set(piiRef, {
-            ...piiData,
-            ownerUid: user.uid,
-            updatedAt: serverTimestamp(),
-          });
+        if (piiData && (isAdmin || member.ownerUid === user.uid)) {
+          const piiRef = doc(db, 'members', member.id, 'private', 'pii');
+          const existingPiiSnap = await getDoc(piiRef).catch(() => null);
+          if (existingPiiSnap?.exists()) {
+            batch.update(piiRef, {
+              ...piiData,
+              updatedAt: serverTimestamp(),
+            });
+          } else {
+            batch.set(piiRef, {
+              ...piiData,
+              ownerUid: user.uid,
+              updatedAt: serverTimestamp(),
+            });
+          }
         }
       }
 
       await batch.commit();
-      if (piiData && (isAdmin || member.ownerUid === user.uid)) {
+      if (isVerified && piiData && (isAdmin || member.ownerUid === user?.uid)) {
         setPiiCache((prev) => ({
           ...prev,
           [member.id]: { ...piiData, ownerUid: member.ownerUid },
@@ -504,7 +673,8 @@ function MainApp() {
     toSabukOrder: number,
     tanggal: string,
     penguji: string,
-    catatan: string
+    catatan: string,
+    options?: { tahunDilantikPutih?: string; newNia?: string }
   ) => {
     const newRecord = {
       fromSabuk: member.sabuk,
@@ -514,13 +684,35 @@ function MainApp() {
       catatan,
     };
     const updatedHistory = [...(member.riwayatTingkat || []), newRecord].slice(-25);
+    const nextOrder = Math.round(Number(toSabukOrder));
+    const eligibleKta = isBeltEligibleForKta(toSabuk, nextOrder);
+    const tanggalYear = /^\d{4}/.test(tanggal) ? tanggal.slice(0, 4) : String(new Date().getFullYear());
+    const tahunPutih = eligibleKta
+      ? options?.tahunDilantikPutih && /^[0-9]{4}$/.test(options.tahunDilantikPutih)
+        ? options.tahunDilantikPutih
+        : member.tahunDilantikPutih && /^[0-9]{4}$/.test(member.tahunDilantikPutih)
+        ? member.tahunDilantikPutih
+        : tanggalYear
+      : undefined;
+
+    const payload: Record<string, unknown> = {
+      sabuk: toSabuk,
+      sabukOrder: nextOrder,
+      riwayatTingkat: updatedHistory,
+      updatedAt: serverTimestamp(),
+    };
+
+    if (tahunPutih) {
+      payload.tahunDilantikPutih = tahunPutih;
+    }
+
+    const graduatedFromKuning = member.sabuk === 'Sabuk Kuning Mas' && nextOrder >= 2;
+    if (graduatedFromKuning && options?.newNia && /^[a-zA-Z0-9_\-.]{3,40}$/.test(options.newNia)) {
+      payload.nia = options.newNia;
+    }
+
     try {
-      await updateDoc(doc(db, 'members', member.id), {
-        sabuk: toSabuk,
-        sabukOrder: Math.round(Number(toSabukOrder)),
-        riwayatTingkat: updatedHistory,
-        updatedAt: serverTimestamp(),
-      });
+      await updateDoc(doc(db, 'members', member.id), payload);
       showToast(`${member.namaLengkap} naik ke ${toSabuk}.`);
     } catch (err) {
       throw new Error(logFirestoreError(err, OperationType.UPDATE, `members/${member.id}`));
@@ -593,14 +785,35 @@ function MainApp() {
 
   const handleSaveBeltNote = async (level: BeltLevel, sejarah: string, kurikulum: string) => {
     try {
-      await updateDoc(doc(db, 'belt_levels', level.id), {
-        sejarah,
-        kurikulum,
-        updatedAt: serverTimestamp(),
-      });
+      const beltRef = doc(db, 'belt_levels', level.id);
+      const snap = await getDoc(beltRef).catch(() => null);
+      if (snap?.exists()) {
+        await updateDoc(beltRef, {
+          order: level.order,
+          name: level.name,
+          category: level.category,
+          colorHex: level.colorHex,
+          stripeCount: level.stripeCount,
+          sejarah,
+          kurikulum,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(beltRef, {
+          order: level.order,
+          name: level.name,
+          category: level.category,
+          colorHex: level.colorHex,
+          stripeCount: level.stripeCount,
+          sejarah,
+          kurikulum,
+          orgCode: 'NURSYAH',
+          updatedAt: serverTimestamp(),
+        });
+      }
       showToast(`Catatan sejarah ${level.name} diperbarui.`);
     } catch (err) {
-      showToast(logFirestoreError(err, OperationType.UPDATE, `belt_levels/${level.id}`));
+      showToast(logFirestoreError(err, OperationType.WRITE, `belt_levels/${level.id}`));
     }
   };
 
@@ -756,6 +969,13 @@ function MainApp() {
     }
   };
 
+  const buildSlotsSnapshotPayload = (records: AdminEmailRecord[]) => ({
+    slot1: records.find((a) => a.slot === 1)?.email || '',
+    slot2: records.find((a) => a.slot === 2)?.email || '',
+    slot3: records.find((a) => a.slot === 3)?.email || '',
+    updatedAt: serverTimestamp(),
+  });
+
   const handleSaveAdminEmail = async (
     slot: 1 | 2 | 3,
     email: string,
@@ -766,6 +986,19 @@ function MainApp() {
     const cleanEmail = email.trim().toLowerCase();
     const oldInSlot = adminEmails.find((a) => a.slot === slot && a.email !== cleanEmail);
     const existingSameEmail = adminEmails.find((a) => a.email === cleanEmail);
+
+    const nextRecords: AdminEmailRecord[] = adminEmails
+      .filter((a) => a.slot !== slot && a.email !== cleanEmail)
+      .concat([
+        {
+          id: cleanEmail,
+          slot,
+          email: cleanEmail,
+          nama: nama.slice(0, 120),
+          jabatan: jabatan.slice(0, 120),
+          addedBy: existingSameEmail?.addedBy || user.uid,
+        },
+      ]);
 
     try {
       const batch = writeBatch(db);
@@ -790,7 +1023,9 @@ function MainApp() {
           updatedAt: serverTimestamp(),
         });
       }
+      batch.set(doc(db, 'admin_config', 'slots'), buildSlotsSnapshotPayload(nextRecords));
       await batch.commit();
+      setAdminEmails(nextRecords.sort((a, b) => a.slot - b.slot));
       showToast(`Email Admin Premium Slot ${slot} berhasil disimpan.`);
     } catch (err) {
       throw new Error(logFirestoreError(err, OperationType.WRITE, `admin_emails/${cleanEmail}`));
@@ -799,11 +1034,47 @@ function MainApp() {
 
   const handleRemoveAdminEmail = async (emailId: string) => {
     if (!user || !isAdmin) return;
+    const nextRecords = adminEmails.filter((a) => a.id !== emailId);
     try {
-      await deleteDoc(doc(db, 'admin_emails', emailId));
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'admin_emails', emailId));
+      batch.set(doc(db, 'admin_config', 'slots'), buildSlotsSnapshotPayload(nextRecords));
+      await batch.commit();
+      setAdminEmails(nextRecords);
       showToast(`Akses Admin Premium untuk ${emailId} dihapus.`);
     } catch (err) {
       throw new Error(logFirestoreError(err, OperationType.DELETE, `admin_emails/${emailId}`));
+    }
+  };
+
+  const handleDeleteRootAdmin = async () => {
+    if (!user || !isAdmin) return;
+    try {
+      await setDoc(doc(db, 'admin_config', 'root'), {
+        revokedEmail: ROOT_ADMIN_EMAIL.toLowerCase(),
+        revokedByUid: user.uid,
+        createdAt: serverTimestamp(),
+      });
+      setRootAdminRevoked(true);
+      const { adminOk } = await checkAdminStatus(user);
+      setIsAdmin(adminOk);
+      if (!adminOk) {
+        setShowAdminEmailsModal(false);
+      }
+      showToast(`Akses Admin Utama (${ROOT_ADMIN_EMAIL}) berhasil dihapus.`);
+    } catch (err) {
+      throw new Error(logFirestoreError(err, OperationType.CREATE, 'admin_config/root'));
+    }
+  };
+
+  const handleRestoreRootAdmin = async () => {
+    if (!user || !isAdmin) return;
+    try {
+      await deleteDoc(doc(db, 'admin_config', 'root'));
+      setRootAdminRevoked(false);
+      showToast(`Admin Utama (${ROOT_ADMIN_EMAIL}) diaktifkan kembali.`);
+    } catch (err) {
+      throw new Error(logFirestoreError(err, OperationType.DELETE, 'admin_config/root'));
     }
   };
 
@@ -833,6 +1104,9 @@ function MainApp() {
         ...(m.alamatLengkap ? { alamatLengkap: m.alamatLengkap.slice(0, 350) } : {}),
         sabuk: m.sabuk,
         sabukOrder: m.sabukOrder,
+        ...(m.tahunDilantikPutih && /^[0-9]{4}$/.test(m.tahunDilantikPutih)
+          ? { tahunDilantikPutih: m.tahunDilantikPutih }
+          : {}),
         ...(m.fotoProfil ? { fotoProfil: m.fotoProfil } : {}),
         statusAktif: m.statusAktif,
         riwayatTingkat: m.riwayatTingkat || [],
@@ -913,7 +1187,7 @@ function MainApp() {
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-800 space-y-3">
+        <div className="p-4 border-t border-slate-800 space-y-2.5">
           {isSignedIn && user ? (
             <>
               <div className="min-w-0">
@@ -1001,7 +1275,7 @@ function MainApp() {
               <button
                 type="button"
                 onClick={() => setShowSignInModal(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <LogIn className="w-3.5 h-3.5" />
                 <span>Masuk Pengurus</span>
@@ -1070,8 +1344,8 @@ function MainApp() {
               letters={letters}
               documentation={documentation}
               isAdmin={isAdmin}
-              seeding={seeding}
-              onBootstrapData={handleBootstrapData}
+              clearingAllData={clearingAllData}
+              onRequestClearAllData={() => setShowClearDataModal(true)}
               onNavigateTab={setActiveTab}
               onOpenSelfRegistration={() => {
                 setActiveTab('members');
@@ -1177,24 +1451,28 @@ function MainApp() {
               beltLevels={beltLevels}
               broadcasts={broadcasts}
               letters={letters}
+              documentationCount={documentation.length}
+              vaultCount={vaultDocs.length}
               piiCache={piiCache}
               backupLogs={backupLogs}
               isAdmin={isAdmin}
+              clearingAllData={clearingAllData}
               onLogCloudBackup={handleLogCloudBackup}
               onRestoreBackup={handleRestoreBackup}
+              onRequestClearAllData={() => setShowClearDataModal(true)}
             />
           )}
         </main>
       </div>
 
-      {/* Non-Blocking Google Sign-In Modal */}
+      {/* Optional Google Sign-In Modal for Admins / Uploaders */}
       {showSignInModal && (
         <div
           className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"
           onClick={() => setShowSignInModal(false)}
         >
           <div
-            className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-6 space-y-5 shadow-xl"
+            className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
@@ -1220,8 +1498,8 @@ function MainApp() {
               </button>
             </div>
 
-            <p className="text-sm text-slate-600 leading-relaxed">
-              Pengisian data diri anggota baru dapat dilakukan langsung tanpa login. Masuk dengan Google diperlukan untuk Pengurus/Admin, mengubah data anggota lama, mengunggah galeri, atau mengirim pengumuman.
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Pengisian data diri anggota baru dapat dilakukan langsung tanpa login. Masuk Google hanya diperlukan untuk Pengurus / Admin atau unggah kenangan.
             </p>
 
             {authError && (
@@ -1345,10 +1623,63 @@ function MainApp() {
           open={showAdminEmailsModal}
           adminEmails={adminEmails}
           currentUserEmail={user?.email || ''}
+          rootAdminRevoked={rootAdminRevoked}
           onClose={() => setShowAdminEmailsModal(false)}
           onSaveAdminEmail={handleSaveAdminEmail}
           onRemoveAdminEmail={handleRemoveAdminEmail}
+          onDeleteRootAdmin={handleDeleteRootAdmin}
+          onRestoreRootAdmin={handleRestoreRootAdmin}
         />
+      )}
+
+      {/* Confirmation Modal: Kosongkan Semua Data Siap Publish */}
+      {isAdmin && showClearDataModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"
+          onClick={() => !clearingAllData && setShowClearDataModal(false)}
+        >
+          <div
+            className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-red-50 text-red-700 rounded-lg border border-red-200 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-slate-900">
+                  Kosongkan Semua Data untuk Publish?
+                </h2>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  Tindakan ini akan menghapus permanen seluruh data anggota ({members.length}), wilayah/ranting ({regions.length}), pengumuman ({broadcasts.length}), surat ({letters.length}), foto kenangan ({documentation.length}), brankas ({vaultDocs.length}), dan riwayat backup ({backupLogs.length}) serta snapshot lokal.
+                </p>
+                <p className="text-xs font-medium text-slate-700 mt-2">
+                  Klasifikasi 20 tingkatan sabuk &amp; daftar 3 email admin tetap disimpan.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                disabled={clearingAllData}
+                onClick={() => setShowClearDataModal(false)}
+                className="min-h-[42px] px-4 py-2 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer disabled:opacity-50"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                disabled={clearingAllData}
+                onClick={handleClearAllData}
+                className="min-h-[42px] inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-red-700 hover:bg-red-800 text-white rounded-lg cursor-pointer disabled:opacity-60"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{clearingAllData ? 'Menghapus...' : 'Ya, Kosongkan Semua'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Mobile Bottom Navigation Bar */}

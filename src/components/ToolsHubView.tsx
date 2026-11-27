@@ -25,9 +25,15 @@ import {
   ToolSection,
   VaultCategory,
 } from '../types/org';
-import { downloadKtaPdfBatch, downloadKtaPng, renderKtaToDataUrl } from '../lib/ktaGenerator';
+import {
+  downloadKtaPdfBatch,
+  downloadKtaPng,
+  renderKtaBackToDataUrl,
+  renderKtaToDataUrl,
+} from '../lib/ktaGenerator';
 import { downloadOfficialLetterPdf } from '../lib/letterPdf';
 import { readFileAsBoundedDataUrl } from '../lib/mediaUtils';
+import { isBeltEligibleForKta } from '../constants/beltsAndSeed';
 import { KenanganGalleryPanel, QuickBroadcastPanel } from './CommunityHubView';
 
 interface ToolsHubViewProps {
@@ -101,11 +107,17 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
     [regions, members]
   );
 
+  const eligibleKtaMembers = useMemo(
+    () => members.filter((m) => isBeltEligibleForKta(m.sabuk, m.sabukOrder)),
+    [members]
+  );
+
   // 1. KTA DIGITAL STATE
   const [selectedKtaMemberId, setSelectedKtaMemberId] = useState(
-    preselectedKtaMemberId || members[0]?.id || ''
+    preselectedKtaMemberId || eligibleKtaMembers[0]?.id || members[0]?.id || ''
   );
   const [ktaPreviewUrl, setKtaPreviewUrl] = useState<string>('');
+  const [ktaBackPreviewUrl, setKtaBackPreviewUrl] = useState<string>('');
   const [ktaRendering, setKtaRendering] = useState(false);
   const [batchRanting, setBatchRanting] = useState('');
   const [batchExporting, setBatchExporting] = useState(false);
@@ -113,22 +125,42 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
   useEffect(() => {
     if (preselectedKtaMemberId) {
       setSelectedKtaMemberId(preselectedKtaMemberId);
-    } else if (!selectedKtaMemberId && members[0]?.id) {
-      setSelectedKtaMemberId(members[0].id);
+    } else if (!selectedKtaMemberId && (eligibleKtaMembers[0]?.id || members[0]?.id)) {
+      setSelectedKtaMemberId(eligibleKtaMembers[0]?.id || members[0].id);
     }
-  }, [preselectedKtaMemberId, members, selectedKtaMemberId]);
+  }, [preselectedKtaMemberId, eligibleKtaMembers, members, selectedKtaMemberId]);
 
   const selectedKtaMember = useMemo(
-    () => members.find((m) => m.id === selectedKtaMemberId) || members[0] || null,
-    [members, selectedKtaMemberId]
+    () =>
+      members.find((m) => m.id === selectedKtaMemberId) ||
+      eligibleKtaMembers[0] ||
+      members[0] ||
+      null,
+    [members, eligibleKtaMembers, selectedKtaMemberId]
+  );
+
+  const selectedKtaEligible = useMemo(
+    () =>
+      selectedKtaMember
+        ? isBeltEligibleForKta(selectedKtaMember.sabuk, selectedKtaMember.sabukOrder)
+        : false,
+    [selectedKtaMember]
   );
 
   const handleGeneratePreview = async () => {
-    if (!selectedKtaMember) return;
+    if (!selectedKtaMember || !selectedKtaEligible) {
+      setKtaPreviewUrl('');
+      setKtaBackPreviewUrl('');
+      return;
+    }
     setKtaRendering(true);
     try {
-      const url = await renderKtaToDataUrl(selectedKtaMember);
-      setKtaPreviewUrl(url);
+      const [frontUrl, backUrl] = await Promise.all([
+        renderKtaToDataUrl(selectedKtaMember),
+        renderKtaBackToDataUrl(selectedKtaMember),
+      ]);
+      setKtaPreviewUrl(frontUrl);
+      setKtaBackPreviewUrl(backUrl);
     } finally {
       setKtaRendering(false);
     }
@@ -136,15 +168,27 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
 
   useEffect(() => {
     if (activeTool === 'kta' && selectedKtaMember) {
-      handleGeneratePreview();
+      if (selectedKtaEligible) {
+        void handleGeneratePreview();
+      } else {
+        setKtaPreviewUrl('');
+        setKtaBackPreviewUrl('');
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool, selectedKtaMember?.id]);
+  }, [activeTool, selectedKtaMember?.id, selectedKtaEligible]);
 
-  const batchMembers = useMemo(() => {
+  const batchScopeMembers = useMemo(() => {
     if (!batchRanting) return members;
     return members.filter((m) => m.ranting === batchRanting);
   }, [members, batchRanting]);
+
+  const batchMembers = useMemo(
+    () => batchScopeMembers.filter((m) => isBeltEligibleForKta(m.sabuk, m.sabukOrder)),
+    [batchScopeMembers]
+  );
+
+  const batchSkippedCount = batchScopeMembers.length - batchMembers.length;
 
   // 3. LETTERS STATE
   const [letNomor, setLetNomor] = useState(`001/PPSI-NRS/${new Date().getFullYear()}`);
@@ -365,7 +409,7 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
             <div>
               <h2 className="text-base font-bold text-slate-900">Alat Cetak KTA Digital</h2>
               <p className="text-xs text-slate-500 mt-1">
-                Mengambil data profil otomatis (Nama, NIA, Alamat Ranting, Sabuk/Strip saat ini, Foto, dan QR Code verifikasi).
+                Cetak KTA resmi hanya berlaku untuk <strong>Sabuk Putih ke atas</strong> (Sabuk Putih, Sabuk Hitam, dan Tingkat Strip 1–17). Nomor KTA ditulis sesuai tahun dilantik Sabuk Putih.
               </p>
             </div>
 
@@ -376,19 +420,34 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
                 onChange={(e) => setSelectedKtaMemberId(e.target.value)}
                 className="w-full px-3 py-2.5 text-sm border border-slate-300 rounded-lg"
               >
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.nia} — {m.namaLengkap} ({m.ranting})
-                  </option>
-                ))}
+                {members.map((m) => {
+                  const eligible = isBeltEligibleForKta(m.sabuk, m.sabukOrder);
+                  return (
+                    <option key={m.id} value={m.id}>
+                      {m.nia} — {m.namaLengkap} ({m.sabuk} · {m.ranting}
+                      {!eligible ? ' · Belum KTA' : ''})
+                    </option>
+                  );
+                })}
               </select>
+
+              {selectedKtaMember && !selectedKtaEligible && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-1">
+                  <p className="font-semibold">
+                    {selectedKtaMember.namaLengkap} masih berada di Sabuk Kuning Mas.
+                  </p>
+                  <p>
+                    Cetak KTA hanya untuk Sabuk Putih ke atas. Naikkan tingkat ke Sabuk Putih terlebih dahulu agar nomor KTA ditulis dan kartu dapat dicetak.
+                  </p>
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-2.5 pt-1">
                 <button
                   type="button"
-                  disabled={!selectedKtaMember || ktaRendering}
+                  disabled={!selectedKtaMember || !selectedKtaEligible || ktaRendering}
                   onClick={handleGeneratePreview}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <CreditCard className="w-4 h-4" />
                   <span>Buat & Pratinjau KTA</span>
@@ -396,25 +455,44 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
 
                 <button
                   type="button"
-                  disabled={!selectedKtaMember}
-                  onClick={() => selectedKtaMember && downloadKtaPng(selectedKtaMember)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-red-700 text-white rounded-lg hover:bg-red-800 cursor-pointer disabled:opacity-50"
+                  disabled={!selectedKtaMember || !selectedKtaEligible}
+                  onClick={() =>
+                    selectedKtaMember &&
+                    selectedKtaEligible &&
+                    downloadKtaPng(selectedKtaMember, 'front')
+                  }
+                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-red-700 text-white rounded-lg hover:bg-red-800 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Unduh KTA (Gambar PNG)</span>
+                  <span>Unduh Depan (PNG)</span>
                 </button>
 
                 <button
                   type="button"
-                  disabled={!selectedKtaMember}
+                  disabled={!selectedKtaMember || !selectedKtaEligible}
                   onClick={() =>
                     selectedKtaMember &&
+                    selectedKtaEligible &&
+                    downloadKtaPng(selectedKtaMember, 'back')
+                  }
+                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-slate-800 text-white rounded-lg hover:bg-slate-700 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Unduh Belakang (PNG)</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!selectedKtaMember || !selectedKtaEligible}
+                  onClick={() =>
+                    selectedKtaMember &&
+                    selectedKtaEligible &&
                     downloadKtaPdfBatch([selectedKtaMember], selectedKtaMember.nia)
                   }
-                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white text-slate-800 border border-slate-300 rounded-lg hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-white text-slate-800 border border-slate-300 rounded-lg hover:bg-slate-50 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>Unduh KTA (PDF)</span>
+                  <span>Unduh PDF (Depan &amp; Belakang)</span>
                 </button>
               </div>
             </div>
@@ -422,20 +500,30 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
             <div className="pt-4 border-t border-slate-200 space-y-3">
               <h3 className="text-sm font-semibold text-slate-900">Cetak Massal Per Ranting</h3>
               <p className="text-xs text-slate-500">
-                Hasilkan berkas PDF siap cetak berisi seluruh kartu anggota pada ranting terpilih (8 kartu per lembar A4).
+                Hasilkan berkas PDF siap cetak berisi KTA sisi depan &amp; belakang (Catur Satya) khusus anggota Sabuk Putih ke atas (4 anggota per lembar A4).
               </p>
               <select
                 value={batchRanting}
                 onChange={(e) => setBatchRanting(e.target.value)}
                 className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg"
               >
-                <option value="">Semua Ranting ({members.length} anggota)</option>
-                {rantingList.map((r) => (
-                  <option key={r} value={r}>
-                    {r} ({members.filter((m) => m.ranting === r).length} anggota)
-                  </option>
-                ))}
+                <option value="">Semua Ranting ({eligibleKtaMembers.length} KTA siap cetak)</option>
+                {rantingList.map((r) => {
+                  const rEligible = members.filter(
+                    (m) => m.ranting === r && isBeltEligibleForKta(m.sabuk, m.sabukOrder)
+                  ).length;
+                  return (
+                    <option key={r} value={r}>
+                      {r} ({rEligible} KTA siap cetak)
+                    </option>
+                  );
+                })}
               </select>
+              {batchSkippedCount > 0 && (
+                <p className="text-[11px] text-amber-800">
+                  {batchSkippedCount} anggota Sabuk Kuning Mas otomatis dilewati dari cetak massal.
+                </p>
+              )}
               <button
                 type="button"
                 disabled={batchMembers.length === 0 || batchExporting}
@@ -447,7 +535,7 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
                     setBatchExporting(false);
                   }
                 }}
-                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium bg-amber-600 hover:bg-amber-700 text-white rounded-lg cursor-pointer disabled:opacity-50"
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium bg-amber-600 hover:bg-amber-700 text-white rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Printer className="w-4 h-4" />
                 <span>
@@ -461,7 +549,9 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
 
           <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-900">Pratinjau Kartu Tanda Anggota</h3>
+              <h3 className="text-sm font-semibold text-slate-900">
+                Pratinjau Kartu Tanda Anggota (Depan &amp; Belakang)
+              </h3>
               {selectedKtaMember && (
                 <span className="text-xs font-mono tabular-nums text-slate-500">
                   {selectedKtaMember.nia}
@@ -469,18 +559,47 @@ export const ToolsHubView: React.FC<ToolsHubViewProps> = ({
               )}
             </div>
 
-            {ktaPreviewUrl ? (
-              <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-100 p-3">
-                <img
-                  src={ktaPreviewUrl}
-                  alt="Pratinjau KTA Digital Aliran Nursyah"
-                  className="w-full h-auto rounded-lg"
-                />
+            {selectedKtaMember && !selectedKtaEligible ? (
+              <div className="h-64 border border-dashed border-amber-300 bg-amber-50/50 rounded-xl flex flex-col items-center justify-center p-6 text-center space-y-2">
+                <p className="text-sm font-semibold text-amber-950">
+                  Cetak KTA Terkunci untuk Sabuk Kuning Mas
+                </p>
+                <p className="text-xs text-amber-800 max-w-md">
+                  Sesuai aturan perguruan, KTA hanya dapat dicetak untuk Sabuk Putih ke atas (Sabuk Putih, Sabuk Hitam, dan Tingkat Strip 1–17).
+                </p>
+              </div>
+            ) : ktaPreviewUrl ? (
+              <div className="space-y-4">
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-100 p-3 space-y-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Tampak Depan · Identitas &amp; QR Verifikasi
+                  </p>
+                  <img
+                    src={ktaPreviewUrl}
+                    alt="Pratinjau KTA Digital Sisi Depan Aliran Nursyah"
+                    className="w-full h-auto rounded-lg"
+                  />
+                </div>
+
+                {ktaBackPreviewUrl && (
+                  <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-100 p-3 space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                      Tampak Belakang · Naskah Sumpah Resmi Catur Satya
+                    </p>
+                    <img
+                      src={ktaBackPreviewUrl}
+                      alt="Pratinjau KTA Digital Sisi Belakang Catur Satya"
+                      className="w-full h-auto rounded-lg"
+                    />
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="h-64 border border-dashed border-slate-300 rounded-xl flex items-center justify-center text-sm text-slate-500">
+              <div className="h-64 border border-dashed border-slate-300 rounded-xl flex items-center justify-center text-sm text-slate-500 p-6 text-center">
                 {members.length === 0
                   ? 'Tambahkan anggota terlebih dahulu untuk mencetak KTA.'
+                  : eligibleKtaMembers.length === 0
+                  ? 'Belum ada anggota Sabuk Putih ke atas yang dapat dicetak KTA-nya.'
                   : 'Memuat pratinjau KTA...'}
               </div>
             )}

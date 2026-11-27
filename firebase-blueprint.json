@@ -29,6 +29,29 @@
       },
       "required": ["slot", "email", "nama", "jabatan", "addedBy", "createdAt", "updatedAt"]
     },
+    "AdminConfig": {
+      "title": "Konfigurasi Status Admin Utama",
+      "description": "Menyimpan status penghapusan Admin Utama agar akses Admin Utama dapat dicabut oleh Admin.",
+      "type": "object",
+      "properties": {
+        "revokedEmail": { "type": "string", "minLength": 5, "maxLength": 180 },
+        "revokedByUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["revokedEmail", "revokedByUid", "createdAt"]
+    },
+    "AdminSlotsConfig": {
+      "title": "Indeks Slot Email Admin",
+      "description": "Indeks 3 slot email admin aktif agar semua admin dapat melihat dan mengelola slot admin.",
+      "type": "object",
+      "properties": {
+        "slot1": { "type": "string", "maxLength": 180 },
+        "slot2": { "type": "string", "maxLength": 180 },
+        "slot3": { "type": "string", "maxLength": 180 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["slot1", "slot2", "slot3", "updatedAt"]
+    },
     "Region": {
       "title": "Wilayah Administrasi & Ranting",
       "description": "Data wilayah berjenjang Provinsi, Kabupaten/Kota, Kecamatan, hingga Ranting/Cabang Latihan.",
@@ -51,7 +74,7 @@
     },
     "BeltLevel": {
       "title": "Klasifikasi Tingkatan Sabuk",
-      "description": "Master tingkatan sabuk mulai Sabuk Kuning Mas, Sabuk Putih, hingga Tingkat Strip 1-17 beserta catatan sejarah.",
+      "description": "Master tingkatan sabuk mulai Sabuk Kuning Mas, Sabuk Putih, Sabuk Hitam, hingga Tingkat Strip 1-17 beserta catatan sejarah.",
       "type": "object",
       "properties": {
         "order": { "type": "integer" },
@@ -80,6 +103,7 @@
         "alamatLengkap": { "type": "string", "maxLength": 350 },
         "sabuk": { "type": "string", "minLength": 3, "maxLength": 60 },
         "sabukOrder": { "type": "integer" },
+        "tahunDilantikPutih": { "type": "string", "minLength": 4, "maxLength": 4, "pattern": "^[0-9]{4}$" },
         "fotoProfil": { "type": "string", "maxLength": 250000 },
         "statusAktif": { "type": "string", "enum": ["Aktif", "Cuti", "Alumni"] },
         "riwayatTingkat": { "type": "array" },
@@ -265,6 +289,10 @@
     "/admin_emails/{emailId}": {
       "schema": { "$ref": "#/entities/AdminEmail" },
       "description": "Daftar 3 email Admin Premium terverifikasi."
+    },
+    "/admin_config/{configId}": {
+      "schema": { "$ref": "#/entities/AdminConfig" },
+      "description": "Status penghapusan atau pemulihan Admin Utama."
     },
     "/regions/{regionId}": {
       "schema": { "$ref": "#/entities/Region" },

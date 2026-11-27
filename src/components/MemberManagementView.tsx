@@ -24,11 +24,12 @@ import {
   BerkasChecklist,
   Member,
   MemberPii,
+  PromotionRecord,
   Region,
   RegionFilterState,
   RegionLevel,
 } from '../types/org';
-import { DEFAULT_BELT_LEVELS } from '../constants/beltsAndSeed';
+import { isBeltEligibleForKta, resolveOrderedBelts } from '../constants/beltsAndSeed';
 import { compressImageToDataUrl, readFileAsBoundedDataUrl } from '../lib/mediaUtils';
 import {
   composeIndonesianAddress,
@@ -69,8 +70,10 @@ interface MemberManagementViewProps {
       alamatLengkap?: string;
       sabuk: string;
       sabukOrder: number;
+      tahunDilantikPutih?: string;
       fotoProfil?: string;
       statusAktif: 'Aktif' | 'Cuti' | 'Alumni';
+      riwayatTingkat?: PromotionRecord[];
       berkasChecklist: BerkasChecklist;
     },
     piiData: Omit<MemberPii, 'ownerUid' | 'updatedAt'> | null
@@ -81,7 +84,8 @@ interface MemberManagementViewProps {
     toSabukOrder: number,
     tanggal: string,
     penguji: string,
-    catatan: string
+    catatan: string,
+    options?: { tahunDilantikPutih?: string; newNia?: string }
   ) => Promise<void>;
   onDeleteMember: (memberId: string) => Promise<void>;
   onLoadMemberPii: (memberId: string) => Promise<MemberPii | null>;
@@ -161,10 +165,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
   const liveSearchInputRef = useRef<HTMLInputElement | null>(null);
   const deferredSearch = useDeferredValue(filter.search);
 
-  const orderedBelts = useMemo(() => {
-    const src = beltLevels.length > 0 ? beltLevels : (DEFAULT_BELT_LEVELS as BeltLevel[]);
-    return [...src].sort((a, b) => a.order - b.order);
-  }, [beltLevels]);
+  const orderedBelts = useMemo(() => resolveOrderedBelts(beltLevels), [beltLevels]);
 
   // Hierarchical region lists (aggregated from explicit region docs, child metadata, and existing members)
   const allProvinsiNames = useMemo(() => {
@@ -320,6 +321,14 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
   const [indoLoading, setIndoLoading] = useState<'kab' | 'kec' | 'kel' | ''>('');
   const [indoApiError, setIndoApiError] = useState('');
   const [formSabuk, setFormSabuk] = useState('Sabuk Kuning Mas');
+  const [formTahunPutih, setFormTahunPutih] = useState(String(new Date().getFullYear()));
+  const [customNiaTouched, setCustomNiaTouched] = useState(false);
+  const [formRiwayat, setFormRiwayat] = useState<PromotionRecord[]>([]);
+  const [histFromSabuk, setHistFromSabuk] = useState('Sabuk Kuning Mas');
+  const [histToSabuk, setHistToSabuk] = useState('Sabuk Putih');
+  const [histTanggal, setHistTanggal] = useState(new Date().toISOString().slice(0, 10));
+  const [histPenguji, setHistPenguji] = useState('Dewan Penguji Cabang');
+  const [histCatatan, setHistCatatan] = useState('');
   const [formStatus, setFormStatus] = useState<'Aktif' | 'Cuti' | 'Alumni'>('Aktif');
   const [formFoto, setFormFoto] = useState('');
   const [formBerkasNama, setFormBerkasNama] = useState('');
@@ -486,7 +495,11 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
   useEffect(() => {
     if (!showMemberModal || editingMember) return;
     const hasContent =
-      formNama.trim() || formWa.trim() || formTempatLahir.trim() || formDomisili.trim();
+      formNama.trim() ||
+      formWa.trim() ||
+      formTempatLahir.trim() ||
+      formDomisili.trim() ||
+      formRiwayat.length > 0;
     if (!hasContent) return;
     try {
       sessionStorage.setItem(
@@ -503,6 +516,8 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
           formRanting,
           formDomisili,
           formSabuk,
+          formTahunPutih,
+          formRiwayat,
           formStatus,
           formChecklist,
         })
@@ -525,12 +540,17 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     formRanting,
     formDomisili,
     formSabuk,
+    formTahunPutih,
+    formRiwayat,
     formStatus,
     formChecklist,
   ]);
 
-  const generateNextNia = (offset = 1) => {
-    const year = new Date().getFullYear();
+  const generateNextNiaForBelt = (sabuk: string, tahunPutih: string, offset = 1) => {
+    const eligible = isBeltEligibleForKta(sabuk);
+    const currentYear = String(new Date().getFullYear());
+    const year = eligible && /^[0-9]{4}$/.test(tahunPutih.trim()) ? tahunPutih.trim() : currentYear;
+    const prefix = eligible ? 'NRS' : 'CALON';
     const existingNias = new Set(members.map((m) => m.nia));
     let maxSeq = members.length;
     members.forEach((m) => {
@@ -541,10 +561,10 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
       }
     });
     let seq = maxSeq + offset;
-    let candidate = `NRS-${year}-${String(seq).padStart(3, '0')}`;
+    let candidate = `${prefix}-${year}-${String(seq).padStart(3, '0')}`;
     while (existingNias.has(candidate)) {
       seq += 1;
-      candidate = `NRS-${year}-${String(seq).padStart(3, '0')}`;
+      candidate = `${prefix}-${year}-${String(seq).padStart(3, '0')}`;
     }
     return candidate;
   };
@@ -587,6 +607,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
 
   const resetPersonalFieldsForNext = (nextNia: string) => {
     setFormNia(nextNia);
+    setCustomNiaTouched(false);
     setFormNama('');
     setFormTempatLahir('');
     setFormTanggalLahir('');
@@ -596,6 +617,8 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     setFormFoto('');
     setFormBerkasNama('');
     setFormBerkasData('');
+    setFormRiwayat([]);
+    setHistCatatan('');
     setFormChecklist({ formulir: true, ktpKk: true, suratSehat: false, foto: false });
     setFormError('');
     try {
@@ -613,10 +636,13 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     setIndoApiError('');
     setFormDetailJalan('');
     setSelectedIndoVillageName('');
+    setCustomNiaTouched(false);
 
     let initProv = filter.provinsi || '';
     let initKab = filter.kabupaten || '';
     let initKec = filter.kecamatan || '';
+    const defaultYear = String(new Date().getFullYear());
+    let initSabuk = filter.sabuk || orderedBelts[0]?.name || 'Sabuk Kuning Mas';
 
     // Check if there is a saved draft first
     let restored = false;
@@ -624,11 +650,17 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
       const raw = sessionStorage.getItem(MEMBER_DRAFT_KEY);
       if (raw) {
         const d = JSON.parse(raw);
-        if (d.formNama || d.formWa || d.formDomisili) {
+        if (d.formNama || d.formWa || d.formDomisili || (Array.isArray(d.formRiwayat) && d.formRiwayat.length > 0)) {
           initProv = d.formProv || filter.provinsi || '';
           initKab = d.formKab || filter.kabupaten || '';
           initKec = d.formKec || filter.kecamatan || '';
-          setFormNia(d.formNia || generateNextNia());
+          initSabuk = d.formSabuk || orderedBelts[0]?.name || 'Sabuk Kuning Mas';
+          const restoredYear =
+            typeof d.formTahunPutih === 'string' && /^\d{4}$/.test(d.formTahunPutih)
+              ? d.formTahunPutih
+              : defaultYear;
+          setFormTahunPutih(restoredYear);
+          setFormNia(d.formNia || generateNextNiaForBelt(initSabuk, restoredYear));
           setFormNama(d.formNama || '');
           setFormTempatLahir(d.formTempatLahir || '');
           setFormTanggalLahir(d.formTanggalLahir || '');
@@ -638,8 +670,9 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
           setFormKec(initKec);
           setFormRanting(d.formRanting || filter.ranting || '');
           setFormDomisili(d.formDomisili || '');
-          setFormSabuk(d.formSabuk || orderedBelts[0]?.name || 'Sabuk Kuning Mas');
+          setFormSabuk(initSabuk);
           setFormStatus(d.formStatus || 'Aktif');
+          setFormRiwayat(Array.isArray(d.formRiwayat) ? d.formRiwayat : []);
           setFormChecklist(
             d.formChecklist || { formulir: true, ktpKk: true, suratSehat: false, foto: false }
           );
@@ -652,7 +685,8 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     }
 
     if (!restored) {
-      setFormNia(generateNextNia());
+      setFormTahunPutih(defaultYear);
+      setFormNia(generateNextNiaForBelt(initSabuk, defaultYear));
       setFormNama('');
       setFormTempatLahir('');
       setFormTanggalLahir('');
@@ -675,14 +709,21 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
         setFormRanting('');
       }
       setFormDomisili('');
-      setFormSabuk(filter.sabuk || orderedBelts[0]?.name || 'Sabuk Kuning Mas');
+      setFormSabuk(initSabuk);
       setFormStatus('Aktif');
+      setFormRiwayat([]);
       setFormFoto('');
       setFormBerkasNama('');
       setFormBerkasData('');
       setFormChecklist({ formulir: true, ktpKk: true, suratSehat: false, foto: false });
       setHasSavedDraft(false);
     }
+
+    setHistFromSabuk('Sabuk Kuning Mas');
+    setHistToSabuk('Sabuk Putih');
+    setHistTanggal(new Date().toISOString().slice(0, 10));
+    setHistPenguji('Dewan Penguji Cabang');
+    setHistCatatan('');
 
     setAddressInputMode('auto');
     const matchedProv = findRegionItemByName(indoProvinces, initProv);
@@ -716,6 +757,10 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
   const canEditPrivatePii =
     !editingMember || isAdmin || (isSignedIn && editingMember.ownerUid === currentUid);
 
+  const isSelfServiceMandiriEdit = Boolean(
+    editingMember && !isSignedIn && editingMember.ownerUid === 'mandiri'
+  );
+
   const openEditModal = async (member: Member) => {
     setEditingMember(member);
     setFormSuccessBanner('');
@@ -723,6 +768,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     setIndoApiError('');
     setFormDetailJalan('');
     setSelectedIndoVillageName('');
+    setCustomNiaTouched(false);
     setFormNia(member.nia);
     setFormNama(member.namaLengkap);
     setFormProv(member.provinsi);
@@ -730,6 +776,20 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     setFormKec(member.kecamatan);
     setFormRanting(member.ranting);
     setFormSabuk(member.sabuk);
+    const derivedTahunPutih =
+      member.tahunDilantikPutih ||
+      member.nia.match(/^NRS-(\d{4})-/)?.[1] ||
+      String(new Date().getFullYear());
+    setFormTahunPutih(derivedTahunPutih);
+    setFormRiwayat(member.riwayatTingkat || []);
+    setHistFromSabuk(member.sabuk);
+    const nextBeltForHist =
+      orderedBelts.find((b) => b.order === member.sabukOrder + 1) ||
+      orderedBelts[orderedBelts.length - 1];
+    setHistToSabuk(nextBeltForHist.name);
+    setHistTanggal(new Date().toISOString().slice(0, 10));
+    setHistPenguji('Dewan Penguji Cabang');
+    setHistCatatan('');
     setFormStatus(member.statusAktif);
     setFormFoto(member.fotoProfil || '');
     setFormChecklist(
@@ -769,6 +829,71 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     setShowMemberModal(true);
   };
 
+  const handleAddHistoryEntry = () => {
+    if (!histTanggal) {
+      setFormError('Pilih tanggal kenaikan tingkat terlebih dahulu.');
+      return;
+    }
+    const newRec: PromotionRecord = {
+      fromSabuk: histFromSabuk,
+      toSabuk: histToSabuk,
+      tanggal: histTanggal,
+      penguji: histPenguji.trim() || 'Dewan Penguji Cabang',
+      catatan: histCatatan.trim() || `Kenaikan tingkat dari ${histFromSabuk} ke ${histToSabuk}.`,
+    };
+    setFormRiwayat((prev) => [...prev, newRec].slice(0, 25));
+
+    // Automatically sync Sabuk Putih inauguration year if user added Sabuk Putih promotion history
+    if (histToSabuk === 'Sabuk Putih' && /^\d{4}/.test(histTanggal)) {
+      const yr = histTanggal.slice(0, 4);
+      setFormTahunPutih(yr);
+      if (
+        !customNiaTouched &&
+        isBeltEligibleForKta(formSabuk) &&
+        (!editingMember || editingMember.sabuk === 'Sabuk Kuning Mas')
+      ) {
+        setFormNia(generateNextNiaForBelt(formSabuk, yr));
+      }
+    }
+
+    setHistFromSabuk(histToSabuk);
+    const toIdx = orderedBelts.findIndex((b) => b.name === histToSabuk);
+    if (toIdx >= 0 && toIdx + 1 < orderedBelts.length) {
+      setHistToSabuk(orderedBelts[toIdx + 1].name);
+    }
+    setHistCatatan('');
+    setFormError('');
+  };
+
+  const handleBeltChangeInForm = (nextSabuk: string) => {
+    setFormSabuk(nextSabuk);
+    if (!customNiaTouched) {
+      if (!editingMember) {
+        setFormNia(generateNextNiaForBelt(nextSabuk, formTahunPutih));
+      } else if (
+        editingMember.sabuk === 'Sabuk Kuning Mas' &&
+        isBeltEligibleForKta(nextSabuk)
+      ) {
+        setFormNia(generateNextNiaForBelt(nextSabuk, formTahunPutih));
+      } else if (
+        editingMember.sabuk === 'Sabuk Kuning Mas' &&
+        !isBeltEligibleForKta(nextSabuk)
+      ) {
+        setFormNia(editingMember.nia);
+      }
+    }
+  };
+
+  const handleTahunPutihChangeInForm = (rawVal: string) => {
+    const clean = rawVal.replace(/\D/g, '').slice(0, 4);
+    setFormTahunPutih(clean);
+    if (clean.length === 4 && !customNiaTouched && isBeltEligibleForKta(formSabuk)) {
+      if (!editingMember || editingMember.sabuk === 'Sabuk Kuning Mas') {
+        setFormNia(generateNextNiaForBelt(formSabuk, clean));
+      }
+    }
+  };
+
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -802,7 +927,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
   const saveMemberAction = async (addAnother: boolean) => {
     setFormError('');
     setFormSuccessBanner('');
-    if (editingMember && !isSignedIn) {
+    if (editingMember && !isSignedIn && editingMember.ownerUid !== 'mandiri') {
       onRequestSignIn();
       return;
     }
@@ -818,7 +943,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
       return;
     }
     if (!niaValid) {
-      setFormError('NIA minimal 3 karakter dan hanya boleh berisi huruf, angka, titik, atau tanda hubung (-/_).');
+      setFormError('NIA / Nomor KTA minimal 3 karakter dan hanya boleh berisi huruf, angka, titik, atau tanda hubung (-/_).');
       return;
     }
     if (cleanProv.length < 2 || cleanKab.length < 2 || cleanKec.length < 2 || cleanRanting.length < 2) {
@@ -827,6 +952,14 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     }
     if (cleanDomisili.length < 4) {
       setFormError('Isi alamat lengkap anggota minimal 4 karakter.');
+      return;
+    }
+
+    const selectedBelt = orderedBelts.find((b) => b.name === formSabuk) || orderedBelts[0];
+    const beltEligibleForKta = isBeltEligibleForKta(selectedBelt.name, selectedBelt.order);
+    const cleanTahunPutih = formTahunPutih.trim();
+    if (beltEligibleForKta && !/^[0-9]{4}$/.test(cleanTahunPutih)) {
+      setFormError('Masukkan Tahun Dilantik Sabuk Putih (4 digit, contoh: 2024) untuk penulisan Nomor KTA.');
       return;
     }
 
@@ -857,7 +990,6 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
       };
     }
 
-    const selectedBelt = orderedBelts.find((b) => b.name === formSabuk) || orderedBelts[0];
     setFormSubmitting(true);
     try {
       if (editingMember) {
@@ -873,8 +1005,10 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
             alamatLengkap: cleanDomisili.slice(0, 350),
             sabuk: selectedBelt.name.slice(0, 60),
             sabukOrder: Math.round(Number(selectedBelt.order)),
+            ...(beltEligibleForKta ? { tahunDilantikPutih: cleanTahunPutih } : {}),
             ...(formFoto ? { fotoProfil: formFoto } : {}),
             statusAktif: formStatus,
+            riwayatTingkat: formRiwayat,
             berkasChecklist: formChecklist,
           },
           piiPayload
@@ -892,20 +1026,25 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
             alamatLengkap: cleanDomisili.slice(0, 350),
             sabuk: selectedBelt.name.slice(0, 60),
             sabukOrder: Math.round(Number(selectedBelt.order)),
+            ...(beltEligibleForKta ? { tahunDilantikPutih: cleanTahunPutih } : {}),
             ...(formFoto ? { fotoProfil: formFoto } : {}),
             statusAktif: formStatus,
-            riwayatTingkat: [],
+            riwayatTingkat: formRiwayat,
             berkasChecklist: formChecklist,
           },
           piiPayload
         );
 
         if (addAnother) {
-          resetPersonalFieldsForNext(generateNextNia(2));
+          resetPersonalFieldsForNext(
+            generateNextNiaForBelt(selectedBelt.name, cleanTahunPutih, 2)
+          );
           setFormSuccessBanner(`Anggota "${cleanNama}" tersimpan. Silakan lanjut isi anggota berikutnya di ${cleanRanting}.`);
           setTimeout(() => namaInputRef.current?.focus(), 80);
         } else {
-          resetPersonalFieldsForNext(generateNextNia(2));
+          resetPersonalFieldsForNext(
+            generateNextNiaForBelt(selectedBelt.name, cleanTahunPutih, 2)
+          );
           setShowMemberModal(false);
         }
       }
@@ -921,6 +1060,8 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
   const [promoTanggal, setPromoTanggal] = useState(new Date().toISOString().slice(0, 10));
   const [promoPenguji, setPromoPenguji] = useState('');
   const [promoCatatan, setPromoCatatan] = useState('');
+  const [promoTahunPutih, setPromoTahunPutih] = useState(String(new Date().getFullYear()));
+  const [promoNewNia, setPromoNewNia] = useState('');
   const [promoSaving, setPromoSaving] = useState(false);
   const [promoError, setPromoError] = useState('');
 
@@ -928,11 +1069,22 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     const nextBelt =
       orderedBelts.find((b) => b.order === member.sabukOrder + 1) ||
       orderedBelts[orderedBelts.length - 1];
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const defaultYr =
+      member.tahunDilantikPutih ||
+      member.nia.match(/^NRS-(\d{4})-/)?.[1] ||
+      todayStr.slice(0, 4);
     setPromoteTarget(member);
     setPromoTargetSabuk(nextBelt.name);
-    setPromoTanggal(new Date().toISOString().slice(0, 10));
+    setPromoTanggal(todayStr);
     setPromoPenguji('Dewan Penguji Cabang');
     setPromoCatatan(`Lulus Ujian Kenaikan Tingkat dari ${member.sabuk} ke ${nextBelt.name}.`);
+    setPromoTahunPutih(defaultYr);
+    if (member.sabuk === 'Sabuk Kuning Mas' && isBeltEligibleForKta(nextBelt.name, nextBelt.order)) {
+      setPromoNewNia(generateNextNiaForBelt(nextBelt.name, defaultYr));
+    } else {
+      setPromoNewNia(member.nia);
+    }
     setPromoError('');
   };
 
@@ -940,12 +1092,18 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
     e.preventDefault();
     setPromoError('');
     if (!promoteTarget) return;
-    if (!isSignedIn) {
+    if (!isSignedIn && promoteTarget.ownerUid !== 'mandiri') {
       onRequestSignIn();
       return;
     }
     const targetBeltObj = orderedBelts.find((b) => b.name === promoTargetSabuk);
     if (!targetBeltObj) return;
+    const eligibleNext = isBeltEligibleForKta(targetBeltObj.name, targetBeltObj.order);
+    if (eligibleNext && !/^[0-9]{4}$/.test(promoTahunPutih.trim())) {
+      setPromoError('Masukkan Tahun Dilantik Sabuk Putih (4 digit angka) untuk penulisan Nomor KTA.');
+      return;
+    }
+
     setPromoSaving(true);
     try {
       await onPromoteMember(
@@ -954,7 +1112,13 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
         targetBeltObj.order,
         promoTanggal,
         promoPenguji.trim() || 'Dewan Penguji',
-        promoCatatan.trim() || `Naik tingkat ke ${targetBeltObj.name}`
+        promoCatatan.trim() || `Naik tingkat ke ${targetBeltObj.name}`,
+        {
+          ...(eligibleNext ? { tahunDilantikPutih: promoTahunPutih.trim() } : {}),
+          ...(promoteTarget.sabuk === 'Sabuk Kuning Mas' && eligibleNext && promoNewNia.trim()
+            ? { newNia: promoNewNia.trim() }
+            : {}),
+        }
       );
       setPromoteTarget(null);
     } catch (err) {
@@ -1421,10 +1585,16 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
               ) : (
                 pagedMembers.map((m) => {
                   const canDelete = isAdmin || (isSignedIn && m.ownerUid === currentUid);
+                  const canPrintKta = isBeltEligibleForKta(m.sabuk, m.sabukOrder);
                   return (
                     <tr key={m.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3 px-4 font-mono tabular-nums text-xs font-medium text-slate-700 whitespace-nowrap">
                         <HighlightMatch text={m.nia} query={deferredSearch} />
+                        {m.tahunDilantikPutih && (
+                          <span className="block text-[10px] text-slate-400">
+                            Putih {m.tahunDilantikPutih}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-3 min-w-0">
@@ -1466,6 +1636,8 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                               ? 'text-amber-700'
                               : m.sabuk.includes('Putih')
                               ? 'text-slate-700'
+                              : m.sabuk.includes('Hitam')
+                              ? 'text-slate-950'
                               : 'text-red-700'
                           }`}
                         >
@@ -1498,12 +1670,21 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => onOpenKtaPreview(m)}
-                            className="px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 border border-slate-200 rounded-md cursor-pointer"
-                            title="Pratinjau KTA Digital"
+                            disabled={!canPrintKta}
+                            onClick={() => canPrintKta && onOpenKtaPreview(m)}
+                            className={`px-2.5 py-1.5 text-xs font-medium border rounded-md ${
+                              canPrintKta
+                                ? 'text-slate-700 hover:bg-slate-100 border-slate-200 cursor-pointer'
+                                : 'text-slate-400 bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed'
+                            }`}
+                            title={
+                              canPrintKta
+                                ? 'Pratinjau KTA Digital'
+                                : 'Cetak KTA hanya untuk Sabuk Putih ke atas'
+                            }
                           >
                             <CreditCard className="w-3.5 h-3.5 inline mr-1" />
-                            KTA
+                            {canPrintKta ? 'KTA' : 'Belum KTA'}
                           </button>
                           <button
                             type="button"
@@ -1565,73 +1746,103 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
             )}
           </div>
         ) : (
-          pagedMembers.map((m) => (
-            <article key={m.id} className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  {m.fotoProfil ? (
-                    <img
-                      src={m.fotoProfil}
-                      alt={m.namaLengkap}
-                      referrerPolicy="no-referrer"
-                      className="w-11 h-11 rounded-lg object-cover border border-slate-200 shrink-0"
-                    />
-                  ) : (
-                    <div className="w-11 h-11 rounded-lg bg-slate-900 text-white text-sm font-semibold flex items-center justify-center shrink-0">
-                      {m.namaLengkap.slice(0, 2).toUpperCase()}
+          pagedMembers.map((m) => {
+            const canDelete = isAdmin || (isSignedIn && m.ownerUid === currentUid);
+            const canPrintKta = isBeltEligibleForKta(m.sabuk, m.sabukOrder);
+            return (
+              <article key={m.id} className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {m.fotoProfil ? (
+                      <img
+                        src={m.fotoProfil}
+                        alt={m.namaLengkap}
+                        referrerPolicy="no-referrer"
+                        className="w-11 h-11 rounded-lg object-cover border border-slate-200 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-11 h-11 rounded-lg bg-slate-900 text-white text-sm font-semibold flex items-center justify-center shrink-0">
+                        {m.namaLengkap.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-slate-900 truncate">
+                        <HighlightMatch text={m.namaLengkap} query={deferredSearch} />
+                      </p>
+                      <p className="text-xs font-mono tabular-nums text-slate-500">
+                        <HighlightMatch text={m.nia} query={deferredSearch} /> · {m.statusAktif}
+                      </p>
                     </div>
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-900 truncate">
-                      <HighlightMatch text={m.namaLengkap} query={deferredSearch} />
-                    </p>
-                    <p className="text-xs font-mono tabular-nums text-slate-500">
-                      <HighlightMatch text={m.nia} query={deferredSearch} /> · {m.statusAktif}
-                    </p>
                   </div>
+                  <span
+                    className={`text-xs font-semibold shrink-0 ${
+                      m.sabuk.includes('Kuning')
+                        ? 'text-amber-700'
+                        : m.sabuk.includes('Hitam')
+                        ? 'text-slate-950'
+                        : 'text-red-700'
+                    }`}
+                  >
+                    {m.sabuk}
+                  </span>
                 </div>
-                <span className="text-xs font-semibold text-red-700 shrink-0">{m.sabuk}</span>
-              </div>
 
-              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg space-y-0.5">
-                <p className="text-xs font-medium text-slate-900">{getDisplayAddress(m)}</p>
-                <p className="text-[11px] text-slate-500">
-                  {m.ranting} · {m.kecamatan} · {m.kabupaten} · {m.provinsi}
-                </p>
-              </div>
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg space-y-0.5">
+                  <p className="text-xs font-medium text-slate-900">{getDisplayAddress(m)}</p>
+                  <p className="text-[11px] text-slate-500">
+                    {m.ranting} · {m.kecamatan} · {m.kabupaten} · {m.provinsi}
+                  </p>
+                </div>
 
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => openDetail(m)}
-                  className="min-h-[44px] px-3 py-2 text-xs font-medium bg-slate-50 text-slate-800 border border-slate-200 rounded-lg cursor-pointer"
-                >
-                  Detail
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenKtaPreview(m)}
-                  className="min-h-[44px] px-3 py-2 text-xs font-medium bg-slate-50 text-slate-800 border border-slate-200 rounded-lg cursor-pointer"
-                >
-                  Cetak KTA
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openEditModal(m)}
-                  className="min-h-[44px] px-3 py-2 text-xs font-medium bg-slate-50 text-slate-800 border border-slate-200 rounded-lg cursor-pointer"
-                >
-                  Edit Data
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openPromoteModal(m)}
-                  className="min-h-[44px] px-3 py-2 text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200 rounded-lg cursor-pointer"
-                >
-                  Naikkan Tingkat
-                </button>
-              </div>
-            </article>
-          ))
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => openDetail(m)}
+                    className="min-h-[44px] px-3 py-2 text-xs font-medium bg-slate-50 text-slate-800 border border-slate-200 rounded-lg cursor-pointer"
+                  >
+                    Detail
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canPrintKta}
+                    onClick={() => canPrintKta && onOpenKtaPreview(m)}
+                    className={`min-h-[44px] px-3 py-2 text-xs font-medium border rounded-lg ${
+                      canPrintKta
+                        ? 'bg-slate-50 text-slate-800 border-slate-200 cursor-pointer'
+                        : 'bg-slate-50 text-slate-400 border-slate-200 opacity-60 cursor-not-allowed'
+                    }`}
+                    title={canPrintKta ? 'Cetak KTA' : 'Cetak KTA hanya untuk Sabuk Putih ke atas'}
+                  >
+                    {canPrintKta ? 'Cetak KTA' : 'Belum KTA'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEditModal(m)}
+                    className="min-h-[44px] px-3 py-2 text-xs font-medium bg-slate-50 text-slate-800 border border-slate-200 rounded-lg cursor-pointer"
+                  >
+                    Edit Data
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPromoteModal(m)}
+                    className="min-h-[44px] px-3 py-2 text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200 rounded-lg cursor-pointer"
+                  >
+                    Naikkan Tingkat
+                  </button>
+                  {canDelete && (
+                    <button
+                      type="button"
+                      onClick={() => onDeleteMember(m.id)}
+                      className="col-span-2 min-h-[42px] inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium bg-red-50 text-red-700 border border-red-200 rounded-lg cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Hapus Anggota</span>
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })
         )}
       </div>
 
@@ -1688,7 +1899,11 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                 {!editingMember && hasSavedDraft && (
                   <button
                     type="button"
-                    onClick={() => resetPersonalFieldsForNext(generateNextNia())}
+                    onClick={() =>
+                      resetPersonalFieldsForNext(
+                        generateNextNiaForBelt(formSabuk, formTahunPutih)
+                      )
+                    }
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 rounded-lg cursor-pointer"
                     title="Bersihkan draf isian"
                   >
@@ -1709,11 +1924,11 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
 
             {/* 3-Step Visual Guide */}
             <div className="px-4 sm:px-6 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-600 shrink-0">
-              <span className="text-red-700 font-semibold">1. Nama &amp; Sabuk</span>
+              <span className="text-red-700 font-semibold">1. Nama, Sabuk &amp; Tahun KTA</span>
               <span aria-hidden="true">→</span>
               <span className="text-slate-800 font-semibold">2. Ranting &amp; Alamat Lengkap</span>
               <span aria-hidden="true">→</span>
-              <span>3. Foto &amp; Simpan</span>
+              <span>3. Foto &amp; Riwayat Sabuk</span>
             </div>
 
             {/* Scrollable Body */}
@@ -1722,8 +1937,22 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                 <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-2 text-xs text-emerald-900">
                   <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
                   <span>
-                    Pengisian data mandiri langsung tersimpan tanpa perlu login atau izin akses.
+                    Pengisian data &amp; riwayat kenaikan tingkat sabuk dapat dilakukan langsung secara mandiri tanpa perlu login.
                   </span>
+                </div>
+              ) : isSelfServiceMandiriEdit ? (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-emerald-900">
+                    Mode Mandiri: Anda dapat langsung memperbarui Tingkatan Sabuk, Tahun Dilantik Sabuk Putih, dan menambah Riwayat Naik Tingkat tanpa login.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onRequestSignIn}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-white border border-emerald-300 text-emerald-900 rounded-lg cursor-pointer"
+                  >
+                    <LogIn className="w-3.5 h-3.5" />
+                    <span>Masuk Google (Ubah Nama/Alamat)</span>
+                  </button>
                 </div>
               ) : (
                 !isSignedIn && (
@@ -1761,14 +1990,18 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-semibold text-slate-800">1. Identitas &amp; Tingkatan Sabuk</p>
                   <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                    <span className="font-mono">NIA: {formNia}</span>
-                    {(!editingMember || isAdmin) && (
+                    <span className="font-mono">
+                      {isBeltEligibleForKta(formSabuk) ? 'No. KTA:' : 'ID Calon:'} {formNia}
+                    </span>
+                    {(!editingMember ||
+                      isAdmin ||
+                      (editingMember.sabuk === 'Sabuk Kuning Mas' && isBeltEligibleForKta(formSabuk))) && (
                       <button
                         type="button"
                         onClick={() => setShowCustomNia((v) => !v)}
                         className="text-red-700 hover:underline font-medium cursor-pointer"
                       >
-                        {showCustomNia ? 'Tutup' : 'Ubah NIA'}
+                        {showCustomNia ? 'Tutup' : 'Ubah Nomor'}
                       </button>
                     )}
                   </div>
@@ -1782,12 +2015,13 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                       ref={namaInputRef}
                       type="text"
                       required
+                      disabled={isSelfServiceMandiriEdit}
                       autoComplete="name"
                       enterKeyHint="next"
                       value={formNama}
                       onChange={(e) => setFormNama(e.target.value)}
                       placeholder="Masukkan nama lengkap Anda"
-                      className="w-full min-h-[44px] px-3.5 py-2.5 text-base sm:text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700"
+                      className="w-full min-h-[44px] px-3.5 py-2.5 text-base sm:text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700 disabled:bg-slate-100 disabled:text-slate-600"
                     />
                   </div>
 
@@ -1798,7 +2032,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                       </label>
                       <select
                         value={formSabuk}
-                        onChange={(e) => setFormSabuk(e.target.value)}
+                        onChange={(e) => handleBeltChangeInForm(e.target.value)}
                         className="w-full min-h-[44px] px-3 py-2 text-base sm:text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700"
                       >
                         {orderedBelts.map((b) => (
@@ -1813,9 +2047,10 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                         Status
                       </label>
                       <select
+                        disabled={isSelfServiceMandiriEdit}
                         value={formStatus}
                         onChange={(e) => setFormStatus(e.target.value as 'Aktif' | 'Cuti' | 'Alumni')}
-                        className="w-full min-h-[44px] px-3 py-2 text-base sm:text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700"
+                        className="w-full min-h-[44px] px-3 py-2 text-base sm:text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700 disabled:bg-slate-100 disabled:text-slate-600"
                       >
                         <option value="Aktif">Aktif</option>
                         <option value="Cuti">Cuti</option>
@@ -1824,17 +2059,57 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                     </div>
                   </div>
 
+                  {isBeltEligibleForKta(formSabuk) ? (
+                    <div className="sm:col-span-2 p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                      <div>
+                        <label className="block text-xs font-semibold text-emerald-950 mb-1">
+                          Tahun Dilantik Sabuk Putih (Nomor KTA) *
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={4}
+                          value={formTahunPutih}
+                          onChange={(e) => handleTahunPutihChangeInForm(e.target.value)}
+                          placeholder="Contoh: 2024"
+                          className="w-full min-h-[42px] px-3 py-2 text-base sm:text-sm font-mono bg-white border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-700"
+                        />
+                      </div>
+                      <div className="text-xs text-emerald-900 space-y-0.5">
+                        <p className="font-semibold">Siap Cetak KTA Resmi</p>
+                        <p className="text-[11px] text-emerald-800">
+                          Nomor KTA ditulis otomatis sesuai tahun dilantik menjadi Sabuk Putih:{' '}
+                          <span className="font-mono font-bold">{formNia}</span>
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="sm:col-span-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
+                      <p className="font-semibold">Sabuk Kuning Mas · Belum Memiliki Nomor &amp; Cetak KTA</p>
+                      <p className="text-[11px] text-amber-800 mt-0.5">
+                        Nomor KTA resmi baru ditulis saat anggota dilantik menjadi Sabuk Putih, dan cetak KTA hanya berlaku untuk Sabuk Putih ke atas.
+                      </p>
+                    </div>
+                  )}
+
                   {showCustomNia && (
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Nomor Induk Anggota (NIA) *
+                        Nomor KTA / Induk Anggota (NIA) *
                       </label>
                       <input
                         type="text"
                         required
-                        disabled={Boolean(editingMember && !isAdmin)}
+                        disabled={Boolean(
+                          editingMember &&
+                            !isAdmin &&
+                            !(editingMember.sabuk === 'Sabuk Kuning Mas' && isBeltEligibleForKta(formSabuk))
+                        )}
                         value={formNia}
-                        onChange={(e) => setFormNia(e.target.value)}
+                        onChange={(e) => {
+                          setCustomNiaTouched(true);
+                          setFormNia(e.target.value);
+                        }}
                         placeholder="NRS-2026-001"
                         className={`w-full min-h-[44px] px-3.5 py-2.5 text-base sm:text-sm font-mono border rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700 disabled:bg-slate-100 disabled:text-slate-500 ${
                           formNia && !niaValid ? 'border-red-400 bg-red-50/40' : 'border-slate-300'
@@ -1845,7 +2120,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                 </div>
                 {!canEditPrivatePii && (
                   <p className="text-[11px] text-slate-500">
-                    Anda dapat memperbarui Nama Lengkap, Alamat Lengkap, Wilayah, Tingkatan Sabuk, Foto, dan Status anggota ini. Data kontak pribadi (WA &amp; TTL) tetap dilindungi untuk pendaftar awal/Admin.
+                    Anda dapat memperbarui Tingkatan Sabuk dan Riwayat Naik Tingkat secara langsung. Untuk mengubah Nama Lengkap, Alamat, atau Data Kontak pribadi, gunakan akun Google pendaftar atau Admin.
                   </p>
                 )}
               </div>
@@ -1858,13 +2133,16 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                       2. Alamat Lengkap &amp; Wilayah Ranting *
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      {addressInputMode === 'auto'
+                      {isSelfServiceMandiriEdit
+                        ? 'Wilayah & alamat dikunci pada Mode Mandiri. Masuk Google untuk mengubahnya.'
+                        : addressInputMode === 'auto'
                         ? 'Otomatis: pilih Provinsi, Kab/Kota, Kecamatan & Kelurahan se-Indonesia.'
                         : 'Manual: ketik langsung nama wilayah dan alamat domisili Anda.'}
                     </p>
                   </div>
 
                   {/* 2-Option Mode Switcher */}
+                  <fieldset disabled={isSelfServiceMandiriEdit} className="contents">
                   <div
                     role="group"
                     aria-label="Pilih metode pengisian alamat"
@@ -1872,6 +2150,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                   >
                     <button
                       type="button"
+                      disabled={isSelfServiceMandiriEdit}
                       onClick={() => {
                         setAddressInputMode('auto');
                         setIndoApiError('');
@@ -1883,7 +2162,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                           }
                         }
                       }}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
                         addressInputMode === 'auto'
                           ? 'bg-red-700 text-white'
                           : 'text-slate-700 hover:bg-white'
@@ -1894,11 +2173,12 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                     </button>
                     <button
                       type="button"
+                      disabled={isSelfServiceMandiriEdit}
                       onClick={() => {
                         setAddressInputMode('manual');
                         setIndoApiError('');
                       }}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
                         addressInputMode === 'manual'
                           ? 'bg-slate-900 text-white'
                           : 'text-slate-700 hover:bg-white'
@@ -1908,8 +2188,10 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                       <span>Manual (Ketik)</span>
                     </button>
                   </div>
+                  </fieldset>
                 </div>
 
+                <fieldset disabled={isSelfServiceMandiriEdit} className="space-y-3.5 disabled:opacity-70">
                 {addressInputMode === 'auto' ? (
                   <div className="space-y-3">
                     {allRantingRegions.length > 0 && (
@@ -2274,7 +2556,7 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
                     Alamat Domisili Lengkap Anggota *
-                    {addressInputMode === 'auto' && (
+                    {addressInputMode === 'auto' && !isSelfServiceMandiriEdit && (
                       <span className="font-normal text-slate-500">
                         {' '}
                         (Terisi otomatis &amp; bisa diedit)
@@ -2287,9 +2569,10 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                     value={formDomisili}
                     onChange={(e) => setFormDomisili(e.target.value)}
                     placeholder="Nama jalan, nomor rumah, RT/RW, Desa/Kelurahan, Kecamatan, Kab/Kota, Provinsi"
-                    className="w-full px-3.5 py-2.5 text-base sm:text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700"
+                    className="w-full px-3.5 py-2.5 text-base sm:text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700 disabled:bg-slate-100 disabled:text-slate-600"
                   />
                 </div>
+                </fieldset>
               </div>
 
               {/* Bagian 3: Foto Profil & Data Opsional */}
@@ -2319,14 +2602,25 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                       className="w-12 h-12 rounded-lg object-cover border border-slate-300 shrink-0"
                     />
                   )}
-                  <label className="flex-1 flex items-center gap-2 min-h-[44px] px-3 py-2 text-xs font-medium bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded-lg cursor-pointer">
+                  <label
+                    className={`flex-1 flex items-center gap-2 min-h-[44px] px-3 py-2 text-xs font-medium border border-slate-300 rounded-lg ${
+                      isSelfServiceMandiriEdit
+                        ? 'bg-slate-100 text-slate-500 cursor-not-allowed'
+                        : 'bg-slate-50 hover:bg-slate-100 cursor-pointer'
+                    }`}
+                  >
                     <Upload className="w-4 h-4 text-slate-600 shrink-0" />
                     <span className="truncate">
-                      {formFoto ? 'Ganti Foto Profil' : 'Pilih Foto / Kamera (Opsional)'}
+                      {isSelfServiceMandiriEdit
+                        ? 'Foto profil hanya dapat diubah setelah Masuk Google'
+                        : formFoto
+                        ? 'Ganti Foto Profil'
+                        : 'Pilih Foto / Kamera (Opsional)'}
                     </span>
                     <input
                       type="file"
                       accept="image/*"
+                      disabled={isSelfServiceMandiriEdit}
                       onChange={handlePhotoUpload}
                       className="hidden"
                     />
@@ -2436,6 +2730,137 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Bagian 4: Riwayat Kenaikan Tingkat Sabuk (Bisa Diisi Mandiri) */}
+              <div className="pt-4 border-t border-slate-100 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-800">
+                      4. Riwayat Naik Tingkat Sabuk <span className="font-normal text-slate-500">(Bisa diisi mandiri · {formRiwayat.length} catatan)</span>
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Catat riwayat kenaikan sabuk Anda sendiri. Jika mengisi pelantikan Sabuk Putih, tahun KTA otomatis disesuaikan.
+                    </p>
+                  </div>
+                </div>
+
+                {formRiwayat.length > 0 && (
+                  <div className="space-y-2">
+                    {formRiwayat.map((rec, idx) => {
+                      const lockedExisting =
+                        isSelfServiceMandiriEdit &&
+                        idx < (editingMember?.riwayatTingkat?.length || 0);
+                      return (
+                        <div
+                          key={`${rec.fromSabuk}-${rec.toSabuk}-${rec.tanggal}-${idx}`}
+                          className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex items-start justify-between gap-3 text-xs"
+                        >
+                          <div className="min-w-0 space-y-0.5">
+                            <p className="font-semibold text-slate-900">
+                              {rec.fromSabuk} → {rec.toSabuk}{' '}
+                              <span className="font-mono text-[11px] font-normal text-slate-500 ml-1">
+                                ({rec.tanggal})
+                              </span>
+                            </p>
+                            <p className="text-slate-600">
+                              {rec.catatan} · <span className="text-slate-500">Penguji: {rec.penguji}</span>
+                            </p>
+                          </div>
+                          {!lockedExisting && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setFormRiwayat((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              className="p-1 text-slate-400 hover:text-red-700 cursor-pointer shrink-0"
+                              title="Hapus baris riwayat ini"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                  <p className="text-[11px] font-semibold text-slate-700">
+                    + Tambah Catatan Riwayat Naik Tingkat
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                        Dari Sabuk
+                      </label>
+                      <select
+                        value={histFromSabuk}
+                        onChange={(e) => setHistFromSabuk(e.target.value)}
+                        className="w-full min-h-[40px] px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg"
+                      >
+                        {orderedBelts.map((b) => (
+                          <option key={b.id} value={b.name}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                        Ke Sabuk
+                      </label>
+                      <select
+                        value={histToSabuk}
+                        onChange={(e) => setHistToSabuk(e.target.value)}
+                        className="w-full min-h-[40px] px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg"
+                      >
+                        {orderedBelts.map((b) => (
+                          <option key={b.id} value={b.name}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-medium text-slate-600 mb-1">
+                        Tanggal Lantik / Ujian
+                      </label>
+                      <input
+                        type="date"
+                        value={histTanggal}
+                        onChange={(e) => setHistTanggal(e.target.value)}
+                        className="w-full min-h-[40px] px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <input
+                      type="text"
+                      value={histPenguji}
+                      onChange={(e) => setHistPenguji(e.target.value)}
+                      placeholder="Nama Penguji / Pelatih"
+                      className="w-full min-h-[40px] px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg"
+                    />
+                    <input
+                      type="text"
+                      value={histCatatan}
+                      onChange={(e) => setHistCatatan(e.target.value)}
+                      placeholder="Catatan singkat (opsional)"
+                      className="w-full min-h-[40px] px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg"
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleAddHistoryEntry}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Tambahkan ke Riwayat</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Sticky Bottom Footer */}
@@ -2499,20 +2924,26 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                   {promoError}
                 </div>
               )}
-              {!isSignedIn && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xs text-amber-900">
-                    Masuk Google 1-klik untuk menyimpan kenaikan tingkat ke database.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={onRequestSignIn}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white rounded-lg cursor-pointer"
-                  >
-                    <LogIn className="w-3.5 h-3.5" />
-                    <span>Masuk Google</span>
-                  </button>
+              {promoteTarget.ownerUid === 'mandiri' && !isSignedIn ? (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900">
+                  Mode Mandiri: Anda dapat mencatat kenaikan tingkat dan riwayat sabuk anggota ini langsung tanpa login.
                 </div>
+              ) : (
+                !isSignedIn && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-amber-900">
+                      Masuk Google 1-klik untuk menyimpan kenaikan tingkat ke database.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={onRequestSignIn}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white rounded-lg cursor-pointer"
+                    >
+                      <LogIn className="w-3.5 h-3.5" />
+                      <span>Masuk Google</span>
+                    </button>
+                  </div>
+                )
               )}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -2544,7 +2975,16 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                 </label>
                 <select
                   value={promoTargetSabuk}
-                  onChange={(e) => setPromoTargetSabuk(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setPromoTargetSabuk(next);
+                    if (
+                      promoteTarget.sabuk === 'Sabuk Kuning Mas' &&
+                      isBeltEligibleForKta(next)
+                    ) {
+                      setPromoNewNia(generateNextNiaForBelt(next, promoTahunPutih));
+                    }
+                  }}
                   className="w-full min-h-[44px] px-3 py-2 text-base sm:text-sm bg-white border border-slate-300 rounded-lg"
                 >
                   {orderedBelts.map((b) => (
@@ -2564,7 +3004,19 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                     type="date"
                     required
                     value={promoTanggal}
-                    onChange={(e) => setPromoTanggal(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPromoTanggal(val);
+                      if (
+                        promoteTarget.sabuk === 'Sabuk Kuning Mas' &&
+                        isBeltEligibleForKta(promoTargetSabuk) &&
+                        /^\d{4}/.test(val)
+                      ) {
+                        const yr = val.slice(0, 4);
+                        setPromoTahunPutih(yr);
+                        setPromoNewNia(generateNextNiaForBelt(promoTargetSabuk, yr));
+                      }
+                    }}
                     className="w-full min-h-[44px] px-3 py-2 text-base sm:text-sm border border-slate-300 rounded-lg"
                   />
                 </div>
@@ -2581,6 +3033,48 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                   />
                 </div>
               </div>
+
+              {isBeltEligibleForKta(promoTargetSabuk) && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-emerald-950 mb-1">
+                      Tahun Dilantik Sabuk Putih *
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={4}
+                      required
+                      value={promoTahunPutih}
+                      onChange={(e) => {
+                        const yr = e.target.value.replace(/\D/g, '').slice(0, 4);
+                        setPromoTahunPutih(yr);
+                        if (
+                          promoteTarget.sabuk === 'Sabuk Kuning Mas' &&
+                          yr.length === 4
+                        ) {
+                          setPromoNewNia(generateNextNiaForBelt(promoTargetSabuk, yr));
+                        }
+                      }}
+                      className="w-full min-h-[40px] px-3 py-1.5 text-sm font-mono bg-white border border-emerald-300 rounded-lg"
+                    />
+                  </div>
+                  {promoteTarget.sabuk === 'Sabuk Kuning Mas' && (
+                    <div>
+                      <label className="block text-xs font-semibold text-emerald-950 mb-1">
+                        Nomor KTA Resmi Baru
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={promoNewNia}
+                        onChange={(e) => setPromoNewNia(e.target.value)}
+                        className="w-full min-h-[40px] px-3 py-1.5 text-sm font-mono bg-white border border-emerald-300 rounded-lg"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -2638,6 +3132,15 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
                   <h2 className="text-lg font-bold text-slate-900">{detailTarget.namaLengkap}</h2>
                   <p className="text-xs font-mono text-slate-500">
                     {detailTarget.nia} · {detailTarget.sabuk} · {detailTarget.statusAktif}
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {isBeltEligibleForKta(detailTarget.sabuk, detailTarget.sabukOrder)
+                      ? `Tahun Dilantik Sabuk Putih: ${
+                          detailTarget.tahunDilantikPutih ||
+                          detailTarget.nia.match(/^NRS-(\d{4})-/)?.[1] ||
+                          '-'
+                        } · Dapat cetak KTA`
+                      : 'Sabuk Kuning Mas · Belum cetak KTA'}
                   </p>
                 </div>
               </div>
@@ -2760,7 +3263,18 @@ export const MemberManagementView: React.FC<MemberManagementViewProps> = ({
               </div>
             </div>
 
-            <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
+            <div className="pt-3 border-t border-slate-100 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const m = detailTarget;
+                  setDetailTarget(null);
+                  openPromoteModal(m);
+                }}
+                className="min-h-[44px] px-4 py-2 text-xs font-medium bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg cursor-pointer"
+              >
+                Tambah Riwayat / Naikkan Tingkat
+              </button>
               <button
                 type="button"
                 onClick={() => {

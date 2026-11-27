@@ -21,7 +21,7 @@ import {
   DocumentationItem,
   Region,
 } from '../types/org';
-import { DEFAULT_BELT_LEVELS } from '../constants/beltsAndSeed';
+import { resolveOrderedBelts } from '../constants/beltsAndSeed';
 import { compressImageToDataUrl, readFileAsBoundedDataUrl } from '../lib/mediaUtils';
 import { STATIC_INDO_PROVINCES } from '../lib/indonesiaRegions';
 
@@ -61,10 +61,7 @@ export const QuickBroadcastPanel: React.FC<QuickBroadcastPanelProps> = ({
   onSendBroadcast,
   onDeleteBroadcast,
 }) => {
-  const orderedBelts = useMemo(() => {
-    const src = beltLevels.length > 0 ? beltLevels : (DEFAULT_BELT_LEVELS as BeltLevel[]);
-    return [...src].sort((a, b) => a.order - b.order);
-  }, [beltLevels]);
+  const orderedBelts = useMemo(() => resolveOrderedBelts(beltLevels), [beltLevels]);
 
   const [blastJudul, setBlastJudul] = useState('');
   const [blastPesan, setBlastPesan] = useState('');

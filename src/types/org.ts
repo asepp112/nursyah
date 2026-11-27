@@ -55,6 +55,7 @@ export interface Member {
   alamatLengkap?: string;
   sabuk: string;
   sabukOrder: number;
+  tahunDilantikPutih?: string;
   fotoProfil?: string;
   statusAktif: 'Aktif' | 'Cuti' | 'Alumni';
   riwayatTingkat: PromotionRecord[];

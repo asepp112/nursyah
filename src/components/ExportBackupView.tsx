@@ -1,10 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   DatabaseBackup,
   Download,
   FileSpreadsheet,
   RefreshCw,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import {
@@ -30,11 +32,15 @@ interface ExportBackupViewProps {
   beltLevels: BeltLevel[];
   broadcasts: Broadcast[];
   letters: Letter[];
+  documentationCount: number;
+  vaultCount: number;
   piiCache: Record<string, MemberPii>;
   backupLogs: BackupLog[];
   isAdmin: boolean;
+  clearingAllData: boolean;
   onLogCloudBackup: (triggerType: 'otomatis' | 'manual') => Promise<void>;
   onRestoreBackup: (payload: FullBackupPayload) => Promise<void>;
+  onRequestClearAllData: () => void;
 }
 
 export const ExportBackupView: React.FC<ExportBackupViewProps> = ({
@@ -43,17 +49,25 @@ export const ExportBackupView: React.FC<ExportBackupViewProps> = ({
   beltLevels,
   broadcasts,
   letters,
+  documentationCount,
+  vaultCount,
   piiCache,
   backupLogs,
   isAdmin,
+  clearingAllData,
   onLogCloudBackup,
   onRestoreBackup,
+  onRequestClearAllData,
 }) => {
   const [exportProv, setExportProv] = useState('');
   const [exportRanting, setExportRanting] = useState('');
   const [autoBackupMeta, setAutoBackupMeta] = useState(() => getLocalAutoBackupMeta());
   const [savingSnapshot, setSavingSnapshot] = useState(false);
   const [restoreMsg, setRestoreMsg] = useState('');
+
+  useEffect(() => {
+    setAutoBackupMeta(getLocalAutoBackupMeta());
+  }, [members.length, regions.length, broadcasts.length, letters.length]);
 
   const provinsiOptions = useMemo(
     () => Array.from(new Set(members.map((m) => m.provinsi))).sort(),
@@ -295,6 +309,34 @@ export const ExportBackupView: React.FC<ExportBackupViewProps> = ({
           )}
         </section>
       </div>
+
+      {/* RESET & KOSONGKAN DATA SIAP PUBLISH (ADMIN ONLY) */}
+      {isAdmin && (
+        <section className="bg-white border border-red-200 rounded-xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 bg-red-50 text-red-700 rounded-lg border border-red-200 shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-base font-bold text-slate-900">
+                Kosongkan Semua Data (Siap Publish)
+              </h2>
+              <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
+                Hapus seluruh data uji coba dari database sebelum aplikasi dipublikasikan ({members.length} anggota, {regions.length} wilayah/ranting, {broadcasts.length} pengumuman, {letters.length} surat, {documentationCount} foto/dokumentasi, {vaultCount} brankas, dan {backupLogs.length} riwayat backup). Daftar 20 tingkatan sabuk &amp; akses 3 email admin tetap terjaga.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={clearingAllData}
+            onClick={onRequestClearAllData}
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 min-h-[44px] text-sm font-semibold bg-red-700 hover:bg-red-800 text-white rounded-lg cursor-pointer disabled:opacity-60 shrink-0 whitespace-nowrap"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>{clearingAllData ? 'Mengosongkan...' : 'Kosongkan Semua Data'}</span>
+          </button>
+        </section>
+      )}
     </div>
   );
 };

@@ -33,7 +33,10 @@ service cloud.firestore {
     }
 
     function isRootAdmin() {
-      return isVerifiedUser() && request.auth.token.email == 'fadliyuliansyah733@gmail.com';
+      return isVerifiedUser()
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() == 'fadliyuliansyah733@gmail.com'
+        && !exists(/databases/$(database)/documents/admin_config/root);
     }
 
     function isAdmin() {
@@ -63,6 +66,23 @@ service cloud.firestore {
         && data.jabatan is string && data.jabatan.size() >= 2 && data.jabatan.size() <= 120
         && isValidId(data.addedBy)
         && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminConfig(data) {
+      return data.keys().hasAll(['revokedEmail', 'revokedByUid', 'createdAt'])
+        && data.keys().hasOnly(['revokedEmail', 'revokedByUid', 'createdAt'])
+        && data.revokedEmail is string && data.revokedEmail.size() >= 5 && data.revokedEmail.size() <= 180
+        && isValidId(data.revokedByUid)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAdminSlotsConfig(data) {
+      return data.keys().hasAll(['slot1', 'slot2', 'slot3', 'updatedAt'])
+        && data.keys().hasOnly(['slot1', 'slot2', 'slot3', 'updatedAt'])
+        && data.slot1 is string && data.slot1.size() <= 180
+        && data.slot2 is string && data.slot2.size() <= 180
+        && data.slot3 is string && data.slot3.size() <= 180
         && data.updatedAt is timestamp;
     }
 
@@ -109,8 +129,9 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'nia', 'namaLengkap', 'provinsi', 'kabupaten', 'kecamatan', 'ranting',
-          'alamatLengkap', 'sabuk', 'sabukOrder', 'fotoProfil', 'statusAktif',
-          'riwayatTingkat', 'berkasChecklist', 'ownerUid', 'orgCode', 'createdAt', 'updatedAt'
+          'alamatLengkap', 'sabuk', 'sabukOrder', 'tahunDilantikPutih', 'fotoProfil',
+          'statusAktif', 'riwayatTingkat', 'berkasChecklist', 'ownerUid', 'orgCode',
+          'createdAt', 'updatedAt'
         ])
         && data.nia is string && data.nia.size() >= 3 && data.nia.size() <= 40 && data.nia.matches('^[a-zA-Z0-9_\\-\\.]+$')
         && data.namaLengkap is string && data.namaLengkap.size() >= 2 && data.namaLengkap.size() <= 120
@@ -121,10 +142,15 @@ service cloud.firestore {
         && (!('alamatLengkap' in data) || (data.alamatLengkap is string && data.alamatLengkap.size() <= 350))
         && data.sabuk is string && data.sabuk.size() >= 3 && data.sabuk.size() <= 60
         && data.sabukOrder is int && data.sabukOrder >= 1 && data.sabukOrder <= 30
+        && (!('tahunDilantikPutih' in data) || (data.tahunDilantikPutih is string && data.tahunDilantikPutih.size() == 4 && data.tahunDilantikPutih.matches('^[0-9]{4}$')))
         && (!('fotoProfil' in data) || (data.fotoProfil is string && data.fotoProfil.size() <= 250000))
         && data.statusAktif in ['Aktif', 'Cuti', 'Alumni']
         && data.riwayatTingkat is list && data.riwayatTingkat.size() <= 25
-        && (data.riwayatTingkat.size() == 0 || data.riwayatTingkat[0] is map)
+        && (data.riwayatTingkat.size() == 0 || (
+          data.riwayatTingkat[0] is map
+          && data.riwayatTingkat[0].keys().hasAll(['fromSabuk', 'toSabuk', 'tanggal', 'penguji', 'catatan'])
+          && data.riwayatTingkat[0].keys().hasOnly(['fromSabuk', 'toSabuk', 'tanggal', 'penguji', 'catatan'])
+        ))
         && data.berkasChecklist is map
         && data.berkasChecklist.keys().hasAll(['formulir', 'ktpKk', 'suratSehat', 'foto'])
         && data.berkasChecklist.keys().hasOnly(['formulir', 'ktpKk', 'suratSehat', 'foto'])
@@ -264,7 +290,7 @@ service cloud.firestore {
     // Collection Match Blocks
     match /admins/{adminUid} {
       allow get: if isValidId(adminUid) && isVerifiedUser() && (request.auth.uid == adminUid || isAdmin());
-      allow list: if isVerifiedUser() && (request.auth.token.email == 'fadliyuliansyah733@gmail.com' || resource.data.uid == request.auth.uid);
+      allow list: if isVerifiedUser() && resource.data.uid == request.auth.uid;
       allow create: if isValidId(adminUid) && isAdmin() && isValidAdminUser(incoming()) && incoming().uid == adminUid && incoming().createdAt == request.time;
       allow update: if isValidId(adminUid) && isAdmin() && isValidAdminUser(incoming()) && incoming().uid == existing().uid && incoming().createdAt == existing().createdAt && incoming().diff(existing()).affectedKeys().hasOnly(['nama', 'jabatan', 'email']);
       allow delete: if isValidId(adminUid) && isAdmin() && adminUid != request.auth.uid;
@@ -276,8 +302,7 @@ service cloud.firestore {
         || isAdmin()
       );
       allow list: if isVerifiedUser() && (
-        request.auth.token.email == 'fadliyuliansyah733@gmail.com'
-        || (request.auth.token.email is string && resource.data.email == request.auth.token.email.lower())
+        (request.auth.token.email is string && resource.data.email == request.auth.token.email.lower())
         || resource.data.addedBy == request.auth.uid
       );
       allow create: if isValidEmailDocId(emailId)
@@ -298,6 +323,27 @@ service cloud.firestore {
       allow delete: if isValidEmailDocId(emailId)
         && isAdmin()
         && !(request.auth.token.email is string && request.auth.token.email.lower() == emailId);
+    }
+
+    match /admin_config/{configId} {
+      allow get: if (configId == 'root' && isVerifiedUser())
+        || (configId == 'slots' && isAdmin());
+      allow list: if false;
+      allow create: if (configId == 'root'
+        && isAdmin()
+        && isValidAdminConfig(incoming())
+        && incoming().revokedByUid == request.auth.uid
+        && incoming().createdAt == request.time)
+        || (configId == 'slots'
+        && isAdmin()
+        && isValidAdminSlotsConfig(incoming())
+        && incoming().updatedAt == request.time);
+      allow update: if configId == 'slots'
+        && isAdmin()
+        && isValidAdminSlotsConfig(incoming())
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['slot1', 'slot2', 'slot3', 'updatedAt']);
+      allow delete: if configId == 'root' && isAdmin();
     }
 
     match /regions/{regionId} {
@@ -329,10 +375,9 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           (isVerifiedUser() && incoming().ownerUid == request.auth.uid)
-          || (!isVerifiedUser() && incoming().ownerUid == 'mandiri' && incoming().riwayatTingkat.size() == 0)
+          || (!isVerifiedUser() && incoming().ownerUid == 'mandiri')
         );
       allow update: if isValidId(memberId)
-        && isVerifiedUser()
         && isValidMember(incoming())
         && incoming().ownerUid == existing().ownerUid
         && incoming().createdAt == existing().createdAt
@@ -340,14 +385,27 @@ service cloud.firestore {
         && (
           (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
             'nia', 'namaLengkap', 'provinsi', 'kabupaten', 'kecamatan', 'ranting',
-            'alamatLengkap', 'sabuk', 'sabukOrder', 'fotoProfil', 'statusAktif',
-            'riwayatTingkat', 'berkasChecklist', 'updatedAt'
+            'alamatLengkap', 'sabuk', 'sabukOrder', 'tahunDilantikPutih', 'fotoProfil',
+            'statusAktif', 'riwayatTingkat', 'berkasChecklist', 'updatedAt'
           ])) ||
           (isVerifiedUser() && incoming().diff(existing()).affectedKeys().hasOnly([
-            'namaLengkap', 'provinsi', 'kabupaten', 'kecamatan', 'ranting',
-            'alamatLengkap', 'sabuk', 'sabukOrder', 'fotoProfil', 'statusAktif',
-            'riwayatTingkat', 'berkasChecklist', 'updatedAt'
-          ]))
+            'nia', 'namaLengkap', 'provinsi', 'kabupaten', 'kecamatan', 'ranting',
+            'alamatLengkap', 'sabuk', 'sabukOrder', 'tahunDilantikPutih', 'fotoProfil',
+            'statusAktif', 'riwayatTingkat', 'berkasChecklist', 'updatedAt'
+          ]) && (
+            !('nia' in incoming().diff(existing()).affectedKeys())
+            || (existing().sabuk == 'Sabuk Kuning Mas' && incoming().sabukOrder >= 2)
+          )) ||
+          (!isVerifiedUser()
+            && existing().ownerUid == 'mandiri'
+            && incoming().riwayatTingkat.size() >= existing().riwayatTingkat.size()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'sabuk', 'sabukOrder', 'riwayatTingkat', 'tahunDilantikPutih', 'nia', 'updatedAt'
+            ])
+            && (
+              !('nia' in incoming().diff(existing()).affectedKeys())
+              || (existing().sabuk == 'Sabuk Kuning Mas' && incoming().sabukOrder >= 2)
+            ))
         );
       allow delete: if isValidId(memberId) && (isAdmin() || (isVerifiedUser() && existing().ownerUid == request.auth.uid));
 
@@ -430,7 +488,7 @@ service cloud.firestore {
 
     match /admin_vault/{vaultId} {
       allow get: if isValidId(vaultId) && isAdmin();
-      allow list: if isVerifiedUser() && (request.auth.token.email == 'fadliyuliansyah733@gmail.com' || resource.data.uploadedByUid == request.auth.uid);
+      allow list: if isVerifiedUser() && resource.data.uploadedByUid == request.auth.uid;
       allow create: if isValidId(vaultId)
         && isAdmin()
         && isValidAdminVaultDoc(incoming())
@@ -442,7 +500,7 @@ service cloud.firestore {
 
     match /backups/{backupId} {
       allow get: if isValidId(backupId) && isAdmin();
-      allow list: if isVerifiedUser() && (request.auth.token.email == 'fadliyuliansyah733@gmail.com' || resource.data.createdByUid == request.auth.uid);
+      allow list: if isVerifiedUser() && resource.data.createdByUid == request.auth.uid;
       allow create: if isValidId(backupId)
         && isAdmin()
         && isValidBackupLog(incoming())

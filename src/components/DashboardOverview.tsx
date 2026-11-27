@@ -1,20 +1,20 @@
 import React from 'react';
 import {
   Award,
-  Database,
   FileText,
   ImagePlus,
   MapPin,
   Megaphone,
   Search,
   ShieldCheck,
+  Trash2,
   UserPlus,
   Users,
   Wrench,
 } from 'lucide-react';
 import { AppTab, BeltLevel, Broadcast, DocumentationItem, Letter, Member, Region, ToolSection } from '../types/org';
 import { ORG_LOGO_PATH } from '../lib/firebase';
-import { DEFAULT_BELT_LEVELS } from '../constants/beltsAndSeed';
+import { resolveOrderedBelts } from '../constants/beltsAndSeed';
 
 interface DashboardOverviewProps {
   members: Member[];
@@ -24,8 +24,8 @@ interface DashboardOverviewProps {
   letters: Letter[];
   documentation: DocumentationItem[];
   isAdmin: boolean;
-  seeding: boolean;
-  onBootstrapData: () => void;
+  clearingAllData: boolean;
+  onRequestClearAllData: () => void;
   onNavigateTab: (tab: AppTab) => void;
   onOpenSelfRegistration: () => void;
   onOpenAdminEmailsModal?: () => void;
@@ -40,8 +40,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   letters,
   documentation,
   isAdmin,
-  seeding,
-  onBootstrapData,
+  clearingAllData,
+  onRequestClearAllData,
   onNavigateTab,
   onOpenSelfRegistration,
   onOpenAdminEmailsModal,
@@ -70,7 +70,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     return set.size;
   }, [regions, members]);
 
-  const beltCount = beltLevels.length || DEFAULT_BELT_LEVELS.length;
+  const beltCount = React.useMemo(() => resolveOrderedBelts(beltLevels).length, [beltLevels]);
   const activeCount = members.filter((m) => m.statusAktif === 'Aktif').length;
 
   const rantingStats = React.useMemo(() => {
@@ -90,6 +90,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     });
     return Array.from(counts.values()).sort((a, b) => b.total - a.total);
   }, [members]);
+
+  const hasAnyOrgData =
+    members.length > 0 ||
+    regions.length > 0 ||
+    broadcasts.length > 0 ||
+    letters.length > 0 ||
+    documentation.length > 0;
 
   return (
     <div className="space-y-6">
@@ -114,15 +121,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {isAdmin && (regions.length === 0 || beltLevels.length === 0) && (
+          {isAdmin && hasAnyOrgData && (
             <button
               type="button"
-              disabled={seeding}
-              onClick={onBootstrapData}
-              className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] text-sm font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap"
+              disabled={clearingAllData}
+              onClick={onRequestClearAllData}
+              className="inline-flex items-center gap-2 px-4 py-2.5 min-h-[44px] text-sm font-medium bg-white text-red-700 border border-red-300 rounded-lg hover:bg-red-50 transition-colors cursor-pointer disabled:opacity-60 whitespace-nowrap"
             >
-              <Database className="w-4 h-4" />
-              <span>{seeding ? 'Memuat...' : 'Muat Data Awal'}</span>
+              <Trash2 className="w-4 h-4" />
+              <span>{clearingAllData ? 'Mengosongkan...' : 'Kosongkan Data'}</span>
             </button>
           )}
           {isAdmin && onOpenAdminEmailsModal && (
@@ -225,7 +232,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <Award className="w-4 h-4 text-slate-400" />
           </div>
           <p className="text-2xl font-bold text-slate-900 font-mono tabular-nums">{beltCount}</p>
-          <p className="text-xs text-slate-500 mt-0.5">Kuning Mas – Strip 17</p>
+          <p className="text-xs text-slate-500 mt-0.5">Kuning Mas, Putih, Hitam – Strip 17</p>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl p-4">
